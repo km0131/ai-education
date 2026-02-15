@@ -161,19 +161,6 @@ ai-education/
 
 **ワンコマンド**: `make gen-api` でステップ 2-4 を自動実行
 
-## 本番運用フロー（Dockerfile.prod）
-
-```
-ローカル開発 (docker-compose up)
-    ↓
-make gen-api（API定義更新）
-    ↓
-git push → CI/CD パイプライン（make gen-api, テスト, ビルド）
-    ↓
-docker build -f Dockerfile.prod（Multi-stage, 静的バイナリ）
-    ↓
-本番環境へデプロイ（安定実行, air 不使用）
-```
 
 ## 主要技術スタック
 
@@ -201,6 +188,41 @@ docker build -f Dockerfile.prod（Multi-stage, 静的バイナリ）
 | 本番起動失敗 | Dockerfile.prod を使用（air 不使用） |
 
 ---
+
+## 運用ドメイン
+
+### Backend
+- APIドメイン
+```
+https://ai-api.kiiswebai.com/
+```
+localhost:8080につながってる
+
+- swaggerアクセス
+**ローカル**
+[ローカル](http://localhost:8080/swagger/index.html#/)
+**グローバル**
+[グローバル](https://ai-api.kiiswebai.com/swagger/index.html#/)
+
+- API確認用
+[API起動確認用](https://ai-api.kiiswebai.com/api/v1/ping)
+
+### Frontend
+
+- スタート画面
+[スタート画面](https://ai.kiiswebai.com/)
+
+localhost:3000につながっている
+
+### Cloudflare Tunnelを使って接続
+ トンネル名：ai_web
+ アプリケーションルール：
+ - フロント:https://ai.kiiswebai.com/→localhost:3000
+ - バックエンド：https://ai-api.kiiswebai.com/→localhost:8080
+
+
+
+
 
 **このドキュメントは継続的に更新されます。**
 
