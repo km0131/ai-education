@@ -1,0 +1,61 @@
+services:
+  db: # DBの設定(PostgreSQL)
+    image: postgres:15-alpine
+    container_name: education-db
+    env_file: .env  
+    environment:
+      # POSTGRES_USER など、特定の名前が必要なものだけマッピング
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "${DB_PORT}:5432"
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"] # データベースが準備OKか確認するコマンド
+      interval: 5s   # 5秒おきにチェック
+      timeout: 5s    # 5秒でタイムアウト
+      retries: 5     # 5回失敗したらダメとみなす
+      start_period: 60s # 起動直後の10秒間は失敗しても大目に見る
+
+  backend:
+    build: # goの設定（production ビルドを使う）
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: education-backend
+    env_file: .env  
+    ports:
+      - "8080:8080"
+    environment:
+      GIN_MODE: release
+      DB_HOST: db   # ここだけはサービス名固定
+    # 本番ビルドではソースをマウントせず、イメージ内のバイナリを使用します
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      # バックエンドが8080ポートで待ち受けを開始したかチェック
+      test: ["CMD", "nc", "-z", "localhost", "8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s # ビルドに時間がかかるので長めに設定
+
+  frontend:
+      build: ./frontend
+      container_name: salon-frontend
+      ports:
+        - "3000:3000"
+      volumes:
+        - ./frontend:/app
+        - /app/node_modules # ラズパイとPCでnode_modulesが競合しないように
+      command: npm run dev
+      environment:
+        - NEXT_PUBLIC_API_URL=http://localhost:8080
+        - NODE_OPTIONS=--max-old-space-size=1024 # ← これを追加！ラズパイのメモリを使いすぎないよう制限
+        - WATCHPACK_POLLING=true
+        - CHOKIDAR_USEPOLLING=true # これを追加（古い検知方式もカバー）
+      depends_on:
+            backend:
+              condition: service_started
