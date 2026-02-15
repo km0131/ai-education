@@ -1,0 +1,9 @@
+# バイナリ
+server
+*.exe
+
+# 依存関係
+vendor/
+
+# OSのゴミ
+.DS_Store
