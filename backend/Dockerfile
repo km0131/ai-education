@@ -13,7 +13,7 @@ RUN go install github.com/air-verse/air@latest
 
 # 依存関係のコピーとキャッシュ利用
 COPY go.mod go.sum ./
-ENV GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY=https://proxy.golang.org,direct
 RUN go env -w GOPROXY=$GOPROXY && go mod download
 
 # ソースコードのコピー（airで監視するため）

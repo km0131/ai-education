@@ -199,25 +199,25 @@ https://ai-api.kiiswebai.com/
 localhost:8080につながってる
 
 - swaggerアクセス
-**ローカル**
-[ローカル](http://localhost:8080/swagger/index.html#/)
-**グローバル**
-[グローバル](https://ai-api.kiiswebai.com/swagger/index.html#/)
 
-- API確認用
-[API起動確認用](https://ai-api.kiiswebai.com/api/v1/ping)
+	- [ローカル](http://localhost:8080/swagger/index.html#/)
+
+	- [グローバル](https://ai-api.kiiswebai.com/swagger/index.html#/)
+
+- [API起動確認用](https://ai-api.kiiswebai.com/api/v1/ping)
 
 ### Frontend
 
-- スタート画面
-[スタート画面](https://ai.kiiswebai.com/)
+- [スタート画面](https://ai.kiiswebai.com/)
 
 localhost:3000につながっている
 
 ### Cloudflare Tunnelを使って接続
  トンネル名：ai_web
+
  アプリケーションルール：
  - フロント:https://ai.kiiswebai.com/→localhost:3000
+
  - バックエンド：https://ai-api.kiiswebai.com/→localhost:8080
 
 

@@ -30,7 +30,6 @@ services:
     environment:
       GIN_MODE: release
       DB_HOST: db   # ここだけはサービス名固定
-    # 本番ビルドではソースをマウントせず、イメージ内のバイナリを使用します
     depends_on:
       db:
         condition: service_healthy
@@ -40,7 +39,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s # ビルドに時間がかかるので長めに設定
+      start_period: 180s # ビルドに時間がかかるので長めに設定
 
   frontend:
       build: ./frontend
@@ -52,10 +51,10 @@ services:
         - /app/node_modules # ラズパイとPCでnode_modulesが競合しないように
       command: npm run dev
       environment:
-        - NEXT_PUBLIC_API_URL=http://localhost:8080
-        - NODE_OPTIONS=--max-old-space-size=1024 # ← これを追加！ラズパイのメモリを使いすぎないよう制限
+        - NEXT_PUBLIC_API_URL=http://backend:8080  #http://localhost:8080
+        - NODE_OPTIONS=--max-old-space-size=2048 # ← これを追加！ラズパイのメモリを使いすぎないよう制限
         - WATCHPACK_POLLING=true
         - CHOKIDAR_USEPOLLING=true # これを追加（古い検知方式もカバー）
       depends_on:
             backend:
-              condition: service_started
+              condition: service_healthy
