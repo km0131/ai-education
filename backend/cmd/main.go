@@ -1,6 +1,6 @@
-// @title Salon App API
+// @title AI Education API
 // @version 1.0
-// @description これはサロン顧客管理用APIです。
+// @description これはAI教育用APIです。
 // @host localhost:8080
 // @BasePath /api/v1
 package main // ← 必ず1行目！
@@ -14,6 +14,9 @@ import (
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
+
+	"ai-education/backend/internal/db"
+	"ai-education/backend/internal/model"
 )
 
 // @Summary      疎通確認
@@ -28,6 +31,10 @@ func PingHandler(c *gin.Context) {
 }
 
 func main() {
+
+	db.InitDB()
+    db.DB.AutoMigrate(&model.User{}, &model.certification{}, &model.Course{}, &model.Enrollment{}, 
+		&model.AiExplanation{}, &model.AiPhotograph{}, &model.AiModel{})
 
 	r := gin.Default()
 
