@@ -1,22 +1,21 @@
-// @title AI Education API
-// @version 1.0
-// @description これはAI教育用APIです。
-// @host localhost:8080
-// @BasePath /api/v1
 package main // ← 必ず1行目！
 
 import (
+	"log"
 	"time"
 
 	_ "ai-education/backend/docs" // 1. swag initで生成されるdocsをインポート
 
+	"ai-education/backend/internal/db"
+	"ai-education/backend/internal/handler"
+	"ai-education/backend/internal/model"
+
 	"github.com/gin-contrib/cors"
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
-
-	"ai-education/backend/internal/db"
-	"ai-education/backend/internal/model"
 )
 
 // @Summary      疎通確認
@@ -33,7 +32,7 @@ func PingHandler(c *gin.Context) {
 func main() {
 
 	db.InitDB()
-    db.DB.AutoMigrate(&model.User{}, &model.certification{}, &model.Course{}, &model.Enrollment{}, 
+	db.DB.AutoMigrate(&model.User{}, &model.Certification{}, &model.Course{}, &model.Enrollment{},
 		&model.AiExplanation{}, &model.AiPhotograph{}, &model.AiModel{})
 
 	r := gin.Default()
@@ -45,6 +44,28 @@ func main() {
 		MaxAge:       12 * time.Hour,
 	}))
 
+	// セッションストアの設定
+	// TODO: 環境変数からセッションキーを取得する
+	store := cookie.NewStore([]byte("secret")) // 秘密鍵は環境変数から取得することを推奨
+	r.Use(sessions.Sessions("mysession", store))
+
+	// ハンドラーの初期化
+	handler := handler.Handler{
+		DB:    db.DB,
+		Store: store,
+	}
+
+	// HTMLテンプレートのロード
+	r.LoadHTMLGlob("frontend/*.html")
+	// 静的ファイルの提供
+	r.Static("/static", "./image")
+
+	// ルーティング
+	r.GET("/", handler.GetLogin)
+	r.POST("/", handler.PostLogin)
+	r.GET("/signup", handler.GetSignup)
+	r.POST("/signup", handler.PostSignup)
+
 	v1 := r.Group("/api/v1")
 	{
 		// main関数の中のインライン定義ではなく、上で定義した関数を使う
@@ -52,5 +73,8 @@ func main() {
 	}
 
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
+	log.Println("Server listening on :8080")
+
 	r.Run(":8080")
 }

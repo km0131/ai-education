@@ -6,7 +6,7 @@ import (
 	"gorm.io/gorm"
 )
 
-type user struct { //ユーザ登録のDB
+type User struct { //ユーザ登録のDB
 	ID            string         `gorm:"type:VARCHAR(36) PRIMARY KEY"` // ID(UUID)を使用
 	CreatedAt     time.Time      //作成日時
 	UpdatedAt     time.Time      //更新日時

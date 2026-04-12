@@ -52,7 +52,21 @@ ai-education/
 ├─ docker-compose.yml
 ├─ backend/
 │  ├─ Dockerfile
-│  └─ .air.toml
+│  ├─ .air.toml
+│  ├─ cmd/
+│  │  └─ main.go
+│  └─ internal/
+│     ├─ db/
+│     │  ├─ client.go
+│     │  ├─ image.go    # 画像関連のDB操作（Image_DB, Random_image）
+│     │  └─ user_repo.go # ユーザー関連のDB操作（InsertUser, FindUserByName）
+│     ├─ handler/
+│     │  └─ handler.go  # HTTPハンドラー（ログイン、サインアップ処理）
+│     ├─ model/
+│     │  └─ model.go    # Gormモデル定義（User, Certificationなど）
+│     └─ utils/
+│        ├─ auth.go     # 認証ヘルパー（パスワードハッシュArgon2）
+│        └─ crypto.go   # 暗号化・復号化ユーティリティ（AES-GCM）
 ├─ frontend/
 │  ├─ Dockerfile
 │  ├─ package.json
@@ -76,6 +90,16 @@ ai-education/
 
 - 開発ワークフロー
 	- `docker-compose.yml` では `./backend` をコンテナ内 `/app` にマウントしており、ソース編集が即座に反映される想定（`air` による監視）。
+- **主要な変更点とフォルダ構成の詳細**:
+    - 以前 `r_memo.go` にあったロジックは、関心事の分離と保守性の向上のため、`backend/internal` ディレクトリ内の複数のファイルに分割されました。
+    - **`backend/cmd/main.go`**: アプリケーションのエントリポイント。Ginルーターのセットアップ、データベース初期化、Gormの自動マイグレーション、Ginセッションの設定、HTMLテンプレートのロード、静的ファイルの提供、そして各ハンドラーの登録を行います。
+    - **`backend/internal/db/client.go`**: データベース接続の初期化と管理を行います。
+    - **`backend/internal/db/image.go`**: 画像（`model.Certification`）に関連するデータベース操作（ランダムな画像の取得や指定された画像リストの取得など）をカプセル化します。
+    - **`backend/internal/db/user_repo.go`**: ユーザー（`model.User`）に関連するデータベース操作（ユーザーの挿入やユーザー名による検索など）を処理します。
+    - **`backend/internal/handler/handler.go`**: HTTPリクエストを処理するGinハンドラーのロジックを含みます。`Handler` 構造体はデータベース接続とセッションストアを保持し、`GetLogin`、`PostLogin`、`GetSignup`、`PostSignup` などのメソッドを通じてログインと新規登録のフローを管理します。
+    - **`backend/internal/model/model.go`**: Gormで使用されるデータベースモデル（`User`, `Certification`, `Course` など）の構造を定義します。`user` 構造体は `User` にリネームされ、エクスポート可能になりました。
+    - **`backend/internal/utils/auth.go`**: Argon2を使用したパスワードハッシュ化と検証のためのユーティリティ関数（`HashPassword`, `VerifyPassword`）と、そのパラメータ（`DefaultParams`）を提供します。
+    - **`backend/internal/utils/crypto.go`**: AES-GCMを用いた汎用的な暗号化と復号化のユーティリティ関数（`Encrypt`, `Decrypt`）を提供します。環境変数 `APP_MASTER_KEY` を使用して鍵を管理します。
 
 ## データベースについて
 
