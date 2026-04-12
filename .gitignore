@@ -7,3 +7,4 @@ vendor/
 
 # OSのゴミ
 .DS_Store.envrc
+.envrc
