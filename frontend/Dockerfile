@@ -1,7 +1,7 @@
-FROM node:20-alpine
+FROM oven/bun:alpine
 WORKDIR /app
-COPY package*.json ./
-RUN npm install
+COPY package.json bun.lockb* ./
+RUN bun install
 COPY . .
-# 開発モードで起動（ホットリロード有効）
-CMD ["npm", "run", "dev"]
+# 開発モードで起動
+CMD ["bun", "run", "dev"]

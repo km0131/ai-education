@@ -6,4 +6,4 @@ server
 vendor/
 
 # OSのゴミ
-.DS_Store
+.DS_Store.envrc

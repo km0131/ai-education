@@ -48,14 +48,14 @@ type Enrollment struct { //履修者用DB
 
 // AIの説明・セット情報を管理（親テーブル）
 type AiExplanation struct {
-	gorm.Model
-	StudentID   string `gorm:"not null;index"`
-	CourseID    string `gorm:"not null;index"`
-	Name        string `gorm:"size:255"`  // セットの名前
-	Explanation string `gorm:"type:text"` // セットの説明
-	// 関連付け：一つの説明に複数の画像が紐付く
-	Photographs []AiPhot
-	ograph `gorm:"foreignKey:AiExplanationID"`
+    gorm.Model
+    StudentID   string `gorm:"not null;index"`
+    CourseID    string `gorm:"not null;index"`
+    Name        string `gorm:"size:255"`  // セットの名前
+    Explanation string `gorm:"type:text"` // セットの説明
+    
+    // 修正箇所：スライス名と型、タグを一行にまとめます
+    Photographs []AiPhotograph `gorm:"foreignKey:AiExplanationID"`
 }
 
 // AIの画像パスを管理（子テーブル）

@@ -1,10 +1,10 @@
 services:
-  db: # DBの設定(PostgreSQL)
-    image: postgres:15-alpine
+  # --- PostgreSQL (リレーショナルデータベース) ---
+  db:
+    image: postgres:17-alpine
     container_name: education-db
     env_file: .env  
     environment:
-      # POSTGRES_USER など、特定の名前が必要なものだけマッピング
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
@@ -13,14 +13,15 @@ services:
     volumes:
       - ./postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"] # データベースが準備OKか確認するコマンド
-      interval: 5s   # 5秒おきにチェック
-      timeout: 5s    # 5秒でタイムアウト
-      retries: 5     # 5回失敗したらダメとみなす
-      start_period: 60s # 起動直後の10秒間は失敗しても大目に見る
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
 
+  # --- Go バックエンド API ---
   backend:
-    build: # goの設定（production ビルドを使う）
+    build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: education-backend
@@ -29,32 +30,45 @@ services:
       - "8080:8080"
     environment:
       GIN_MODE: release
-      DB_HOST: db   # ここだけはサービス名固定
+      DB_HOST: db
     depends_on:
       db:
         condition: service_healthy
     healthcheck:
-      # バックエンドが8080ポートで待ち受けを開始したかチェック
       test: ["CMD", "nc", "-z", "localhost", "8080"]
+      interval: 20s      # チェックの間隔を広げる
+      timeout: 10s       # 応答待ちを長くする
+      retries: 5
+      start_period: 300s # 5分間は失敗しても強制終了させない
+  # --- Bun + React/Next.js フロントエンド ---
+  frontend:
+    build: ./frontend
+    container_name: education-frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: bun run dev
+    environment:
+      - API_URL=http://backend:8080
+      - WATCHPACK_POLLING=true
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # --- SurrealDB (ポートを8005に変更) ---
+  surrealdb:
+    image: surrealdb/surrealdb:latest
+    container_name: education-surrealdb
+    # コンテナ内では常に8000で動くため、外部公開用を8005に設定
+    command: start --log trace --user ${SURREALDB_USER:-root} --pass ${SURREALDB_PASS:-root} rocksdb:/data/database.db
+    ports:
+      - "8005:8000" 
+    volumes:
+      - ./surreal_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "(echo > /dev/tcp/localhost/8000) >/dev/null 2>&1 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 180s # ビルドに時間がかかるので長めに設定
-
-  frontend:
-      build: ./frontend
-      container_name: salon-frontend
-      ports:
-        - "3000:3000"
-      volumes:
-        - ./frontend:/app
-        - /app/node_modules # ラズパイとPCでnode_modulesが競合しないように
-      command: npm run dev
-      environment:
-        - NEXT_PUBLIC_API_URL=http://backend:8080  #http://localhost:8080
-        - NODE_OPTIONS=--max-old-space-size=2048 # ← これを追加！ラズパイのメモリを使いすぎないよう制限
-        - WATCHPACK_POLLING=true
-        - CHOKIDAR_USEPOLLING=true # これを追加（古い検知方式もカバー）
-      depends_on:
-            backend:
-              condition: service_healthy
