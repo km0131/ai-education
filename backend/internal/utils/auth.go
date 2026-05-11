@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -84,7 +85,7 @@ func decodeHash(encodedHash string) (p *argon2Params, salt, hash []byte, err err
 		return nil, nil, nil, fmt.Errorf("argon2id: incompatible version")
 	}
 
-	p = &argon2Params{}}
+	p = &argon2Params{}
 	_, err = fmt.Sscanf(vals[3], "m=%d,t=%d,p=%d", &p.memory, &p.iterations, &p.parallelism)
 	if err != nil {
 		return nil, nil, nil, err

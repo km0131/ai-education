@@ -1,0 +1,1330 @@
+package main
+
+import (
+	"archive/zip"
+	"crypto/rand"
+	"crypto/subtle"
+	"embed"
+	"io"
+	mrand "math/rand" // math/rand に 'mrand' という別名をつける
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+
+	"errors"
+	"fmt"
+	"io/fs"
+	"log"
+
+	"bytes"
+	"mime/multipart"
+
+	"math/big"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"encoding/base64"
+	"encoding/hex"
+
+	"github.com/gin-contrib/cors"
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-contrib/sessions/cookie"
+	"golang.org/x/crypto/argon2"
+
+	"github.com/google/uuid"
+	"golang.org/x/text/transform"
+	"golang.org/x/text/unicode/norm"
+	"golang.org/x/text/width"
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+
+	"github.com/skip2/go-qrcode"
+
+	"path/filepath"
+)
+
+const sessionKey = "signup_image_list"
+
+//go:embed out/*
+var reactApp embed.FS
+
+type user struct { //ユーザ登録のDB
+	ID            string         `gorm:"type:VARCHAR(36) PRIMARY KEY"` // ID(UUID)を使用
+	CreatedAt     time.Time      //作成日時
+	UpdatedAt     time.Time      //更新日時
+	DeletedAt     gorm.DeletedAt `gorm:"index"`                      //倫理削除
+	Name          string         `gorm:"type:text;unique;not null"`  // TEXT UNIQUE NOT NULL 名前
+	Password      string         `gorm:"type:varchar(255);not null"` // VARCHAR(255) NOT NULL パスワード
+	PasswordGroup string         `gorm:"type:text;not null"`         // TEXT NOT NULL 画像のグループ
+	Email         string         `gorm:"type:text"`                  // TEXT メール（生徒は登録しないためNULLを許容）
+	Teacher       bool           `gorm:"type:boolean;not null"`      // BOOLEAN NOT NULL 生徒か生徒かを登録
+	QRpassword    string         `gorm:"type:varchar(255);not null"` // VARCHAR(255) NOT NULL QRパスワード
+}
+
+type certification struct { //セキュリティー用画像のDB
+	ID   uint   `gorm:"primaryKey"` //画像番号
+	Name string `gorm:"not null"`   //画像の名前
+}
+
+type Course struct { //クラス用のDB
+	// ID	自動採番される主キー (Primary Key)
+	// CreatedAt	データが作成された日時を自動記録
+	// UpdatedAt	データが更新された日時を自動記録
+	// DeletedAt	論理削除（後述）のためのフラグ
+	// 自動追加　めっちゃ便利
+	gorm.Model
+	Title       string `gorm:"not null"` // クラス名
+	Description string // 説明
+	InviteCode  string `gorm:"unique;not null;index"` // 参加コード (一意の文字列 / 重複不可)
+	TeacherID   string `gorm:"index"`                 // 担任教師のID (UsersテーブルのIDを参照する外部キー想定)
+	Teacher     user   `gorm:"foreignKey:TeacherID"`  //教師IDを使ってuserのデータを検索して取り出せる。便利
+	ThemeColor  string //クラスのカラーコード
+}
+
+type Enrollment struct { //履修者用DB
+	gorm.Model        // 自動追加　めっちゃ便利
+	CourseID   uint   `gorm:"not null;index"`      // クラスid
+	StudentID  string `gorm:"not null;index"`      // 生徒id
+	Course     Course `gorm:"foreignKey:CourseID"` //生徒IDを使ってcourseのデータを検索して取り出せる。便利
+}
+
+// AIの説明・セット情報を管理（親テーブル）
+type AiExplanation struct {
+	gorm.Model
+	StudentID   string `gorm:"not null;index"`
+	CourseID    string `gorm:"not null;index"`
+	Name        string `gorm:"size:255"`  // セットの名前
+	Explanation string `gorm:"type:text"` // セットの説明
+	// 関連付け：一つの説明に複数の画像が紐付く
+	Photographs []AiPhotograph `gorm:"foreignKey:AiExplanationID"`
+}
+
+// AIの画像パスを管理（子テーブル）
+type AiPhotograph struct {
+	gorm.Model
+	AiExplanationID uint   `gorm:"not null;index"` // 親IDへの参照
+	PhotographPath  string `gorm:"not null"`       // 保存したファイルパス
+}
+
+type AiModel struct {
+	gorm.Model
+	StudentID string `gorm:"not null;index"`
+	CourseID  string `gorm:"not null;index"`
+	ModelPath string `json:"model_path"` // モデルの保存場所
+	IsReady   bool   `json:"is_ready"`   // 学習完了フラグ
+}
+
+// テンプレートに渡すデータ構造
+type LoginPageData struct {
+	ErrorMessage string // エラーメッセージ
+}
+
+// ログインリクエスト用の構造体
+type LoginRequest struct {
+	Username string `json:"inputUsername"`
+}
+
+// ログインパスワード照合
+type LoginRegistrer struct {
+	Username string   `json:"username"`
+	Images   []string `json:"images"`
+}
+
+// QRコードログイン照合
+type QRRegistrer struct {
+	QR string `json:"qr_data"`
+}
+
+// データ登録用の構造体
+type RegisterRequest struct {
+	Username string   `json:"username"`
+	Role     string   `json:"role"`
+	Images   []string `json:"images"` // これが「上から順」のラベルリスト
+	Email    string   `json:"email"`  // 先生の場合のみ
+}
+
+// クラス作成用のデータ構造体
+type CreateClassRequest struct {
+	Title       string `json:"className"`
+	Description string `json:"description"`
+}
+
+// 参加しているクラスの返却用構造体
+type CourseResponse struct {
+	ID          uint   `json:"id"`
+	ClassName   string `json:"className"`
+	TeacherName string `json:"teacherName"`
+	Description string `json:"description"`
+	ThemeColor  string `json:"themeColor"`
+}
+
+// 画像の受けとり構造体
+type AISet struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Images      []string `json:"images"` // Base64文字列の配列
+}
+
+// クラスIDと画像の構造体
+type AICreateRequest struct {
+	ClassId string  `json:"classId"`
+	AISets  []AISet `json:"aiSets"`
+}
+
+// 全てのセットの画像とラベル名を格納するための構造体スライス
+type TrainingSet struct {
+	ExplanationID uint
+	Name          string
+	Images        [][]byte
+}
+
+func main() {
+	key := os.Getenv("APP_MASTER_KEY") //環境変数に登録したQR暗号化のカギ
+	if key == "" {
+		fmt.Println("エラー: 環境変数が設定されていません")
+	} else {
+		fmt.Printf("成功: 鍵の長さは %d 文字です\n", len(key))
+	}
+	//データベースに接続
+	db, err := gorm.Open(sqlite.Open("web.sqlite3"), &gorm.Config{})
+	if err != nil {
+		log.Fatal("データベースへの接続に失敗しました:", err)
+	}
+	db.AutoMigrate(
+		&user{},
+		&certification{},
+		&Course{},
+		&Enrollment{},
+		&AiExplanation{},
+		&AiPhotograph{},
+		&AiModel{},
+	)
+	fmt.Println("テーブルのマイグレーションが完了しました。")
+
+	r := gin.New() //gin.Default()
+	r.Use(gin.Logger(), gin.Recovery())
+	r.RedirectTrailingSlash = false
+	r.RedirectFixedPath = false
+	r.MaxMultipartMemory = 100 << 20
+
+	// CORS設定: フロントエンドからのリクエストを許可
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:3000", "http://127.0.0.1:3000"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+	}))
+
+	secret := []byte("your-very-secret-key-that-should-be-long-and-random") // 秘密鍵 (シークレットキー) を設定します。
+	store := cookie.NewStore(secret)                                        // 1. クッキーストアを作成
+	r.Use(sessions.Sessions("mysession", store))                            // 2. セッションミドルウェアをルーターに適用
+
+	// 1. embedしたファイルから "out" フォルダの中身を取り出す
+	staticFiles, err := fs.Sub(reactApp, "out")
+	if err != nil {
+		log.Fatal("Failed to sub out directory:", err)
+	}
+
+	api := r.Group("/api") //具体的な処理
+
+	{
+		api.POST("/login", func(c *gin.Context) {
+			var req LoginRequest
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "リクエスト形式が正しくありません"})
+				return
+			}
+
+			var fetcheduser user
+			result := db.Where("name = ?", req.Username).Find(&fetcheduser)
+
+			// 1. ユーザーが存在しない場合
+			if result.Error != nil || result.RowsAffected == 0 {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "入力されたユーザー名は存在しません。"})
+				return
+			}
+
+			// 2. パスワード用画像番号のパース（既存ロジック）
+			stringValues := strings.Split(fetcheduser.PasswordGroup, ",")
+			var number []int
+			for _, s := range stringValues {
+				if i, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+					number = append(number, i)
+				}
+			}
+
+			// 3. 画像データ取得（既存のImage_DBを使用）
+			list, name, err := Image_DB(db, number)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "画像データの取得に失敗しました"})
+				return
+			}
+
+			// 4. セッションにユーザー名を一時保存（次の認証ステップ用）
+			session := sessions.Default(c)
+			session.Set("pending_user", req.Username)
+			session.Save()
+
+			// 5. 次の画面で必要なデータをJSONで返す
+			c.JSON(http.StatusOK, gin.H{
+				"status":   "next_step",
+				"img_list": list,
+				"img_name": name,
+			})
+		})
+		api.POST("/login_registrer", func(c *gin.Context) { //ログインパスワード照合
+			var req LoginRegistrer
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "リクエスト形式が正しくありません"})
+				return
+			}
+			session := sessions.Default(c)
+			name := session.Get("pending_user")
+			fmt.Println("ユーザ名:", name)
+			// セッションの値nil チェック
+			if name == nil {
+				log.Println("セッションキーが見つかりません。シリアライズをスキップします。")
+				return
+			}
+			count := 3
+			password_1 := ""             //パスワード
+			for i := 0; i < count; i++ { //値を取り出して文字列として保存
+				password_1 += req.Images[i]
+			}
+			db_hashStr, err := GetUser(db, name.(string), false)
+			if err != nil {
+				log.Printf("ユーザー取得失敗: %v", err)
+				return
+			}
+
+			password_2, err := ComparePassword(password_1, db_hashStr)
+			if err != nil {
+				log.Println("パスワードが一致しません")
+				return
+			}
+			if err := LoginUser(db, c, name.(string)); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "セッション保存失敗"})
+				return
+			}
+			fmt.Println("パスワード照合結果:", password_2)
+
+			c.JSON(http.StatusOK, gin.H{
+				"status":   "password",
+				"password": password_2,
+			})
+		})
+		api.POST("/login_qr", func(c *gin.Context) { //QRログイン
+			var req QRRegistrer
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "リクエスト形式が正しくありません"})
+				return
+			}
+			// 形式: $ID=tesuto-E50t$pass=976b2b1dc7249a5aa4b569bbb7f9efd8
+			parts := strings.Split(req.QR, "$")
+			if len(parts) != 3 {
+				log.Printf("QRの分解に失敗")
+				return
+			}
+			userName := strings.Replace(parts[1], "ID=", "", 1)
+			db_hashStr, err := GetUser(db, userName, true)
+			if err != nil {
+				log.Printf("ユーザー取得失敗: %v", err)
+				return
+			}
+			password := strings.Replace(parts[2], "pass=", "", 1)
+			password_2, err := ComparePassword(password, db_hashStr)
+			if err != nil {
+				log.Println("パスワードが一致しません")
+				return
+			}
+			// 関数を呼び出すだけ！
+			if err := LoginUser(db, c, userName); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "セッション保存失敗"})
+				return
+			}
+			fmt.Println("パスワード照合結果:", password_2)
+			c.JSON(http.StatusOK, gin.H{
+				"status": "QR_Registrer",
+				"QR":     password_2,
+			})
+		})
+		api.POST("/signup", func(c *gin.Context) { //アカウント作成
+			list, name, number, err := Random_image(db) //ランダムに画像のパスを取得
+			if err != nil {
+				log.Fatal("画像リストの生成中にエラーが発生しました:", err)
+			}
+			fmt.Println(list)
+			fmt.Println(name)
+			fmt.Println(number)
+			// セッションを取得
+			session := sessions.Default(c)
+			// データを保存
+			session.Set(sessionKey, number) //表示された画像の番号をセッションに保存
+			// 変更を保存 (これがクッキーとしてクライアントに送信されます)
+			session.Save()
+
+			c.JSON(http.StatusOK, gin.H{
+				"status":   "next_step",
+				"img_list": list,
+				"img_name": name,
+			})
+
+		})
+
+		api.POST("/register", func(c *gin.Context) { //データを登録
+			var req RegisterRequest
+			// 1. JSONデータを構造体にバインド（読み込み）
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "無効なデータ形式です"})
+				return
+			}
+			// 2. セッションから「提示した画像の正解セット」を取得する場合（照合が必要なら）
+			session := sessions.Default(c)
+			number := session.Get(sessionKey)
+			fmt.Println("提示していた画像番号:", number)
+			// セッションの値nil チェック
+			if number == nil {
+				log.Println("セッションキーが見つかりません。シリアライズをスキップします。")
+				return
+			}
+			intnumber, ok := number.([]int) //セッションの値をスライスに変換
+			if !ok {
+				// 型が期待した []int ではない場合の処理
+				log.Printf("ユーザー番号の型が期待通りではありません: 実際の型 %T", intnumber)
+				return
+			}
+
+			num := serializeIntSlice(intnumber) //DBに保存する為にスライスを文字列に変更
+			username := req.Username            //ユーザー名
+			email := req.Email                  //メールアドレス
+			teacher := true                     //生徒か先生か？初期値は先生
+			password := req.Images              //パスワードとして選択した画像の名前を取得
+			if email == "" {                    //メールアドレスが空の場合は生徒なので生徒に変更
+				email = "null"  //DB保存の為NULLを設定
+				teacher = false //生徒に変更
+			}
+
+			count := 3
+			password_1 := ""             //DBに保存する文字列の関数
+			for i := 0; i < count; i++ { //値を取り出して文字列として保存
+				password_1 += password[i]
+			}
+
+			hashPassword_1, err := hashPassword(password_1, defaultParams) //文字列に変換したパスワードをハッシュ化（Argon2）使用
+			qrToken := generateRandomToken()                               //QRコード用のランダムなパスワード
+
+			hashQRToken, err := hashPassword(qrToken, defaultParams) //QRパスワードをハッシュ化（Argon2）使用
+			if err != nil {
+				// エラー処理
+				log.Fatal(err)
+			}
+			Name, err := InsertUser(db, username, hashPassword_1, num, email, teacher, hashQRToken) //DBに保存
+			if err != nil {
+				// エラー処理
+				log.Fatal(err)
+			}
+			QR, err := GetQRCode(Name, qrToken) //QRコードの作成
+			if err != nil {
+				// エラー処理
+				log.Fatal(err)
+			}
+
+			c.JSON(http.StatusOK, gin.H{
+				"status":  "success",
+				"message": "ユーザー登録が完了しました",
+				"QR":      QR,
+				"ID":      Name,
+				"name":    username,
+				"teacher": teacher,
+			})
+
+			fmt.Println("QRコード作成完了")
+
+		})
+		api.GET("/session", func(c *gin.Context) {
+			session := sessions.Default(c)
+
+			// セッションから値を取得
+			id := session.Get("user_id")
+			name := session.Get("user_nam")
+			teacherVal := session.Get("user_teacher")
+
+			// ログインチェック
+			if id == nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "ログインしていません"})
+				return
+			}
+
+			var role string
+			// 型アサーションを bool に変更
+			if t, ok := teacherVal.(bool); ok {
+				if t {
+					// true の場合は先生
+					role = "teacher"
+				} else {
+					// false の場合は生徒
+					role = "student"
+				}
+			}
+
+			// レスポンス送信
+			c.JSON(http.StatusOK, gin.H{
+				"user_id":      id,
+				"user_nam":     name,
+				"user_teacher": role,
+			})
+		})
+		api.POST("/create_class", func(c *gin.Context) { //クラス作成用
+			var req CreateClassRequest
+			//  JSONデータを構造体にバインド（読み込み）
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "無効なデータ形式です"})
+				return
+			}
+			var themeColors = []string{ //クラスカラーの選択し
+				"bg-amber-600", "bg-orange-600", "bg-yellow-600", "bg-red-600",
+				"bg-emerald-600", "bg-green-600", "bg-teal-600", "bg-lime-600",
+				"bg-blue-600", "bg-indigo-600", "bg-sky-600", "bg-violet-600",
+				"bg-purple-600", "bg-fuchsia-600", "bg-pink-600", "bg-rose-600",
+				"bg-cyan-600", "bg-blue-500", "bg-emerald-500", "bg-indigo-500",
+			}
+			r := mrand.New(mrand.NewSource(time.Now().UnixNano())) //クラスカラーの乱数生成
+			session := sessions.Default(c)
+			teacherID := session.Get("user_id").(string) //セッションから教師IDの取得
+			// DBに登録
+			newCourse := Course{
+				Title:       req.Title,       // "className" の中身
+				Description: req.Description, // "description" の中身
+				TeacherID:   teacherID,
+				ThemeColor:  themeColors[r.Intn(len(themeColors))],
+			}
+			newID, err := CreateCourseWithUniqueCode(db, &newCourse)
+			if err != nil {
+				c.JSON(500, gin.H{"error": "作成失敗"})
+				return
+			}
+			// 登録したクラスに参加
+			joinCourse := Enrollment{
+				CourseID:  newID,
+				StudentID: teacherID,
+			}
+			db.Create(&joinCourse)
+
+			c.JSON(http.StatusOK, gin.H{
+				"status":  "success",
+				"message": "クラスを作成しました",
+				"course":  newCourse.InviteCode,
+			})
+		})
+		api.POST("/join_class", func(c *gin.Context) { //クラス参加用
+			var data map[string]string
+			if err := c.ShouldBindJSON(&data); err != nil {
+				c.JSON(400, gin.H{"error": "無効な形式です"})
+				return
+			}
+			code := data["inviteCode"] //データの取得
+			session := sessions.Default(c)
+			userVal := session.Get("user_id") //セッションから教師IDの取得
+			// ログインチェック
+			if userVal == nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "ログインしていません"})
+				return
+			}
+			studentID := userVal.(string)
+			if code == "" {
+				c.JSON(400, gin.H{"error": "招待コードを入力してください"})
+				return
+			}
+			var targetCourse Course //クラスIDの取得
+			if err := db.Where("invite_code = ?", code).First(&targetCourse).Error; err != nil {
+				// 見つからなかった場合
+				c.JSON(404, gin.H{"error": "有効な招待コードではありません"})
+				return
+			}
+			var count int64 //kurasuに参加していないか確認
+			db.Model(&Enrollment{}).Where("course_id = ? AND student_id = ?", targetCourse.ID, studentID).Count(&count)
+			if count > 0 {
+				c.JSON(400, gin.H{"error": "既にこのクラスに参加しています"})
+				return
+			}
+			joinCourse := Enrollment{
+				CourseID:  targetCourse.ID,
+				StudentID: studentID,
+			}
+			if err := db.Create(&joinCourse).Error; err != nil {
+				c.JSON(500, gin.H{"error": "参加処理に失敗しました"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"status":    "success",
+				"className": targetCourse.Title,
+			})
+		})
+		api.GET("/my_courses", func(c *gin.Context) {
+			session := sessions.Default(c)
+			userVal := session.Get("user_id") // セッションからデータを取る
+			// nil かどうかをチェック
+			if userVal == nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "ログインしていません"})
+				return
+			}
+			ID := userVal.(string)
+			var enrollments []Enrollment
+			err := db.Preload("Course.Teacher").Where("student_id = ?", ID).Find(&enrollments).Error
+
+			if err != nil {
+				c.JSON(500, gin.H{"error": "データ取得失敗"})
+				return
+			}
+			var responseList []CourseResponse
+			for _, e := range enrollments {
+				s := e.Course.Teacher.Name
+				parts := strings.Split(s, "-")
+				UserNam := parts[0]
+				// 必要な情報を新しい構造体に詰め替える
+				res := CourseResponse{
+					ID:          e.CourseID,
+					ClassName:   e.Course.Title,
+					TeacherName: UserNam, // Teacher情報がPreloadされている前提
+					Description: e.Course.Description,
+					ThemeColor:  e.Course.ThemeColor,
+				}
+				// リストに追加
+				responseList = append(responseList, res)
+			}
+
+			c.JSON(http.StatusOK, gin.H{
+				"status":  "success",
+				"courses": responseList,
+			})
+
+		})
+		api.POST("/ai_create", func(c *gin.Context) {
+			var req AICreateRequest
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+
+			session := sessions.Default(c)
+			userVal := session.Get("user_id")
+			if userVal == nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "ログインしていません"})
+				return
+			}
+			ID := userVal.(string)
+			courseID := req.ClassId
+
+			var allTrainingData []TrainingSet
+
+			for _, set := range req.AISets {
+				// 1. DB保存（親）
+				explanation := AiExplanation{
+					StudentID:   ID,
+					CourseID:    courseID,
+					Name:        set.Name,
+					Explanation: set.Description,
+				}
+				db.Create(&explanation)
+
+				var currentSetImages [][]byte
+				for _, base64Data := range set.Images {
+					filePath, err := decodeBase64Image(base64Data)
+					if err != nil {
+						continue
+					}
+					imgData, err := os.ReadFile(filePath)
+					if err == nil {
+						currentSetImages = append(currentSetImages, imgData)
+					}
+
+					// DB保存（子：写真パス）
+					photo := AiPhotograph{
+						AiExplanationID: explanation.ID,
+						PhotographPath:  filePath,
+					}
+					db.Create(&photo)
+				}
+
+				// 送信用スライスに追加
+				allTrainingData = append(allTrainingData, TrainingSet{
+					Name:   set.Name,
+					Images: currentSetImages,
+				})
+			}
+
+			db.Where(AiModel{StudentID: ID, CourseID: courseID}).
+				Assign(AiModel{
+					IsReady:   false,
+					ModelPath: "",
+				}).
+				FirstOrCreate(&AiModel{})
+			// --- 全てのセットの準備ができたら、一括でPythonへ送信（非同期） ---
+			if len(allTrainingData) > 0 {
+
+				go func(userID string, cID string, data []TrainingSet) {
+					// 新しい一括送信関数を呼び出す
+					if err := sendAllSetsToPython(userID, cID, data); err != nil {
+						fmt.Printf("Python一括学習送信エラー: %v\n", err)
+					}
+				}(ID, courseID, allTrainingData)
+			}
+
+			c.JSON(http.StatusOK, gin.H{"message": "AI作成リクエストを一括で受け付けました。学習を開始します。"})
+		})
+
+		api.POST("/callback/model_ready", func(c *gin.Context) {
+			userID := c.PostForm("user_id")
+			courseID := c.PostForm("explanation_id")
+			file, err := c.FormFile("model_zip")
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "ファイルが取得できませんでした"})
+				return
+			}
+
+			// 保存先パス: ./models/user_123/ (Static配信設定と合わせる)
+			saveDir := filepath.Join("./models", userID)
+
+			// Goでは os.MkdirAll を使用します
+			if err := os.MkdirAll(saveDir, 0755); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "ディレクトリ作成失敗"})
+				return
+			}
+
+			zipPath := filepath.Join(saveDir, "model.zip")
+
+			// 1. ZIPを一旦保存
+			if err := c.SaveUploadedFile(file, zipPath); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "ZIP保存失敗"})
+				return
+			}
+
+			// 2. ZIPを解凍する
+			if err := unzip(zipPath, saveDir); err != nil {
+				fmt.Printf("解凍失敗: %v\n", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "解凍処理失敗"})
+				return
+			}
+
+			// 3. 解凍が終わったらZIPファイル自体は削除
+			os.Remove(zipPath)
+
+			// 4. DBのレコードを更新
+			// targetDir ではなく saveDir を使用します
+			result := db.Where(AiModel{StudentID: userID, CourseID: courseID}).
+				Assign(AiModel{
+					ModelPath: saveDir,
+					IsReady:   true,
+				}).FirstOrCreate(&AiModel{})
+
+			if result.Error != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "DB更新失敗"})
+				return
+			}
+
+			c.JSON(200, gin.H{"status": "recorded", "user_id": userID})
+		})
+		api.GET("/ai_status/all/:course_id", func(c *gin.Context) {
+			// セッションチェックは念のため残す（ログイン済みユーザーのみ閲覧可）
+			session := sessions.Default(c)
+			if session.Get("user_id") == nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "ログインが必要です"})
+				return
+			}
+
+			courseID := c.Param("course_id")
+
+			var models []AiModel
+			// そのコースIDを持つ全てのモデルを取得
+			// Findを使うことで、一人分ではなくスライス（配列）に全データを入れます
+			err := db.Where("course_id = ?", courseID).Find(&models).Error
+
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "データ取得に失敗しました"})
+				return
+			}
+
+			// React側で扱いやすいように返却
+			c.JSON(200, gin.H{
+				"status": "success",
+				"models": models, // [{student_id: "A", is_ready: true...}, {student_id: "B"...}]
+			})
+		})
+		// GET /api/ai_status/detail/:course_id/:student_id
+		// 「選択した特定のモデル」を返却するAPI
+		api.GET("/ai_status/detail/:course_id/:student_id", func(c *gin.Context) {
+			// パスパラメータから両方取得する
+			courseID := c.Param("course_id")
+			studentID := c.Param("student_id")
+
+			var model AiModel
+
+			// DBから特定の学生・コースに一致する最新の学習済みモデルを1件取得
+			result := db.Where("course_id = ? AND student_id = ? AND is_ready = ?", courseID, studentID, true).
+				Order("created_at desc").
+				First(&model)
+
+			if result.Error != nil {
+				c.JSON(http.StatusNotFound, gin.H{
+					"status":  "error",
+					"message": "利用可能な学習済みモデルが見つかりませんでした",
+				})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{
+				"status":     "success",
+				"student_id": model.StudentID,
+				"course_id":  model.CourseID,
+				"model_path": model.ModelPath,
+				"is_ready":   model.IsReady,
+				"updated_at": model.UpdatedAt,
+			})
+		})
+	}
+
+	// C. Next.jsの内部ファイル配信
+	r.StaticFS("/_next", http.FS(staticFiles))
+
+	r.Static("/static", "./image") //画像の場所を指定
+
+	// D. ルート（/）および全パスの制御
+	// これを一番最後に書くことで、API以外のリクエストを全てReactに流します
+	r.NoRoute(func(c *gin.Context) {
+		path := c.Request.URL.Path
+		// ファイルが存在すればそれを返し、なければ index.html を返す
+		f, err := staticFiles.Open(strings.TrimPrefix(path, "/"))
+		if err != nil {
+			c.FileFromFS(path, http.FS(staticFiles))
+			return
+		}
+		f.Close()
+		c.FileFromFS(path, http.FS(staticFiles))
+	})
+
+	r.Run(":8080")
+}
+
+// ハッシュ化
+// パラメータ構造体: Argon2のコストパラメータを定義
+type params struct {
+	memory      uint32 // メモリコスト (KiB)
+	iterations  uint32 // 反復回数 (タイムコスト)
+	parallelism uint8  // 並列度 (スレッド数)
+	saltLength  uint32 // ソルトの長さ
+	keyLength   uint32 // 最終的なハッシュの長さ
+}
+
+// 推奨されるデフォルトパラメータ
+var defaultParams = &params{
+	memory:      128 * 1024, // 128MB (維持: セキュリティと8GBメモリを考慮)
+	iterations:  2,          // 4から2に削減: 時間コストを半減
+	parallelism: 2,          // 2スレッドに設定 (CPU占有抑制)
+	saltLength:  16,         //ソイルの長さ
+	keyLength:   32,         //最終的なハッシュの長さ
+}
+
+// hashPassword: パスワードをArgon2でハッシュ化し、Base64でエンコードされた文字列を返す
+func hashPassword(password string, p *params) (hash string, err error) {
+	// 1. セキュリティのためのソルトを生成
+	salt := make([]byte, p.saltLength)
+	_, err = rand.Read(salt)
+	if err != nil {
+		return "", fmt.Errorf("ソルトの生成に失敗: %w", err)
+	}
+
+	// 2. Argon2によるハッシュ計算
+	hashBytes := argon2.IDKey(
+		[]byte(password),
+		salt,
+		p.iterations,
+		p.memory,
+		p.parallelism,
+		p.keyLength,
+	)
+
+	// 3. ハッシュ、ソルト、パラメータをまとめて文字列としてエンコード（データベース保存用）
+	// 形式: $argon2id$v=19$m={memory},t={iterations},p={parallelism}${salt_base64}${hash_base64}
+	b64Salt := base64.RawStdEncoding.EncodeToString(salt)
+	b64Hash := base64.RawStdEncoding.EncodeToString(hashBytes)
+	encodedHash := fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
+		argon2.Version,
+		p.memory,
+		p.iterations,
+		p.parallelism,
+		b64Salt,
+		b64Hash,
+	)
+	return encodedHash, nil
+}
+
+var (
+	ErrInvalidHash         = errors.New("保存されたハッシュの形式が正しくありません")
+	ErrIncompatibleVersion = errors.New("Argon2のバージョンが互換性がありません")
+)
+
+func ComparePassword(password, encodedHash string) (bool, error) { //ハッシュ化したパスワードと入力したパスワードが正しいか照合
+	// 1. 保存された文字列を分解
+	// 形式: $argon2id$v=19$m=65536,t=3,p=2$salt$hash
+	parts := strings.Split(encodedHash, "$")
+	if len(parts) != 6 {
+		return false, ErrInvalidHash
+	}
+
+	// 2. バージョンの確認
+	var version int
+	_, err := fmt.Sscanf(parts[2], "v=%d", &version)
+	if err != nil {
+		return false, err
+	}
+	if version != argon2.Version {
+		return false, ErrIncompatibleVersion
+	}
+
+	// 3. パラメータ（m, t, p）の抽出
+	var p params
+	_, err = fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &p.memory, &p.iterations, &p.parallelism)
+	if err != nil {
+		return false, err
+	}
+
+	// 4. ソルトとハッシュをBase64からデコード
+	salt, err := base64.RawStdEncoding.DecodeString(parts[4]) //ソルト
+	if err != nil {
+		return false, err
+	}
+
+	decodedHash, err := base64.RawStdEncoding.DecodeString(parts[5]) //ハッシュ
+	if err != nil {
+		return false, err
+	}
+	p.keyLength = uint32(len(decodedHash))
+
+	// 5. 同じソルトとパラメータで再度ハッシュ計算を行う
+	comparisonHash := argon2.IDKey(
+		[]byte(password),
+		salt,
+		p.iterations,
+		p.memory,
+		p.parallelism,
+		p.keyLength,
+	)
+
+	// 6. 計算したハッシュと保存されていたハッシュを「一定時間」で比較
+	// (通常の == 比較だと計算時間の差でパスワードが推測されるリスクがあるため)
+	if subtle.ConstantTimeCompare(decodedHash, comparisonHash) == 1 {
+		return true, nil
+	}
+
+	return false, nil
+}
+
+// ユーザー登録DB
+func InsertUser(db *gorm.DB, name string, hashStr string, number string, email string, teacher bool, QRhashStr string) (DB_name string, err error) {
+	const maxRetries = 3
+	newID := uuid.New().String()
+	for i := 0; i < maxRetries; i++ {
+		// ユーザー名 を生成
+		name_uuid, err := createUniqueUsername(name)
+		// デバッグログとして記録し、パニックを避ける
+		log.Printf("生成されたユーザー名: %s", name_uuid)
+		if err != nil {
+			log.Printf("ユーザー名サフィックス生成エラー: %v", err)
+			return "", err
+		}
+		newName := user{
+			ID:            newID,
+			Name:          name_uuid,
+			Password:      hashStr,
+			PasswordGroup: number,
+			Email:         email,
+			Teacher:       teacher,
+			QRpassword:    QRhashStr,
+		}
+		result := db.Create(&newName)
+		// 挿入後のエラーチェックを追加
+		if result.Error != nil {
+			// ログに出力し、処理を中断するか、エラーレスポンスを返す
+			log.Printf("挿入試行 %d 回目失敗: %v", i+1, result.Error)
+			continue
+		}
+
+		if result.RowsAffected > 0 {
+			log.Printf("ユーザー名 %s で挿入に成功しました。", newName.Name)
+			return newName.Name, nil // 成功したので、生成されたユーザー名を返して終了
+		}
+
+		// 影響を受けた行数が0でないかも確認できる
+		if result.RowsAffected == 0 {
+			log.Println("警告: 挿入された行数が0でした。")
+		}
+	}
+	return "", fmt.Errorf("ユーザー名の生成と挿入に%d回失敗しました。この名前では登録できません。", maxRetries)
+}
+
+func GetUser(db *gorm.DB, Id string, qr bool) (hashStr string, err error) {
+	// 1. 格納するための構造体を用意
+	var retrievedUser user
+
+	// 2. 検索実行（引数の Id を使って検索するように修正）
+	// result 変数に結果を格納してエラーチェックを行うのが一般的です
+	result := db.Where("name = ?", Id).First(&retrievedUser)
+
+	// 3. エラーハンドリング
+	if result.Error != nil {
+		// データが見つからない、または接続エラーなどの場合
+		return "", result.Error
+	}
+
+	// 4. 正しい値を返す
+	// 第1戻り値にパスワード（文字列）、第2戻り値に nil（エラーなし）
+	if qr {
+		return retrievedUser.QRpassword, nil
+	} else {
+		return retrievedUser.Password, nil
+	}
+}
+
+// ランダムに画像を選択
+func Random_image(db *gorm.DB) ([]string, []string, []int, error) {
+	const totalCount = 30
+	const selectCount = 12
+
+	// 1. 1から30までのリストを作成
+	candidates := make([]int, totalCount)
+	for i := 0; i < totalCount; i++ {
+		candidates[i] = i + 1
+	}
+
+	// 2. crypto/rand を使ったフィッシャー・イェーツ・シャッフル
+	for i := len(candidates) - 1; i > 0; i-- {
+		// 0 から i までのランダムなインデックスを選択
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		j := int(n.Int64())
+		// 要素を入れ替える
+		candidates[i], candidates[j] = candidates[j], candidates[i]
+	}
+
+	// 3. 先頭の12個を取り出す
+	number := candidates[:selectCount]
+
+	// 4. 画像リンクと名前を取得
+	list, name, err := Image_DB(db, number)
+	if err != nil {
+		// log.Fatalを使うとサーバーが止まるので、実運用ではエラーを返すのが一般的です
+		return nil, nil, nil, fmt.Errorf("画像リストのDB検索エラー: %w", err)
+	}
+
+	return list, name, number, nil
+}
+
+// 画像番号からリンクとDB検索を行う
+func Image_DB(db *gorm.DB, number []int) ([]string, []string, error) {
+	var fetchedCertifications []certification
+	result := db.Where("id IN ?", number).Find(&fetchedCertifications) //１回で全てのデータを取得
+	if result.Error != nil {
+		// IDが無い
+		return nil, nil, fmt.Errorf("指定IDリストのデータ取得に失敗しました: %w", result.Error)
+	}
+	const selectionCount = 10
+	list := make([]string, 0, selectionCount)
+	name := make([]string, 0, selectionCount)
+	for _, i := range fetchedCertifications {
+		imageIDStr := strconv.Itoa(int(i.ID))
+		r := "static/certification/" + imageIDStr + ".png" // 画像リンクの作成
+		list = append(list, r)                             //画像のパスをリストに追加
+		name = append(name, i.Name)                        // 画像の名前をリストに追加
+	}
+	// 取得した数が必要な数と異なるときのチェック
+	if len(fetchedCertifications) != len(number) {
+		// ランダムに選ばれたIDの一部が見つからなかった
+		log.Printf("警告: 期待値 %d 件に対し、取得件数は %d 件でした。", len(number), len(fetchedCertifications))
+	}
+	return list, name, nil
+}
+
+// 文字を結合[1,2,3] => "1,2,3"(DB保存の為)
+func serializeIntSlice(slice []int) string {
+	strSlice := make([]string, len(slice))
+	//各要素を文字列に変換
+	for i, num := range slice {
+		strSlice[i] = strconv.Itoa(num)
+	}
+	//カンマで結合
+	return strings.Join(strSlice, ",")
+}
+
+// 名前の一意性を保つために4桁のUUIDを生成し追加
+func createUniqueUsername(desiredName string) (string, error) {
+	// ユーザー名の長さ制限に合わせて、希望の名前を正規化/短縮する
+	normalizedName, err := normalizeJapaneseUsername(desiredName)
+	if err != nil {
+		log.Panicln("正規化でエラー%w", err)
+	}
+	// ４文字のランダムなサフィックスを生成
+	suffix, err := generateRandomSuffix(4)
+	if err != nil {
+		return "", err
+	}
+	// 結合して最終的なユーザー名を生成 (例: tanaka-h7v8xPzM)
+	finalUsername := fmt.Sprintf("%s-%s", normalizedName, suffix)
+	// DBのUNIQUE制約と競合した場合は、呼び出し元でこの関数を再試行するロジックが必要
+	return finalUsername, nil
+}
+
+// 一意性を保つための複合正規化処理
+func normalizeJapaneseUsername(desiredName string) (string, error) {
+	// 濁音とかを処理して半角に
+	t := transform.Chain(norm.NFKC, width.Fold)
+	output, _, err := transform.String(t, desiredName)
+	if err != nil {
+		return "", err
+	}
+	// 英字部分を小文字に統一する
+	normalizedName := strings.ToLower(output)
+	// 空白や制御文字の除去 (必要に応じて)
+	normalizedName = strings.TrimSpace(normalizedName)
+	return normalizedName, nil
+}
+
+// UUIDの生成名前用
+func generateRandomSuffix(length int) (string, error) {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	result := make([]byte, length)
+
+	for i := 0; i < length; i++ {
+		// charsetの長さに基づいた安全な乱数を生成
+		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		if err != nil {
+			return "", err
+		}
+		result[i] = charset[num.Int64()]
+	}
+
+	return string(result), nil
+}
+
+// QRコードのBase64形式作成
+func GetQRCode(ID string, password string) (string, error) {
+	qrContent := fmt.Sprintf("$ID=%s$pass=%s", ID, password)
+	// QRコード生成 (256x256ピクセル)
+	png, err := qrcode.Encode(qrContent, qrcode.Medium, 256)
+	if err != nil {
+		log.Panicln("QRコード作成でエラー", err)
+	}
+
+	// Base64にエンコードしてレスポンス
+	encoded := base64.StdEncoding.EncodeToString(png)
+
+	return encoded, nil
+}
+
+func generateRandomToken() string {
+	b := make([]byte, 16) // 16バイトのランダム値
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+func LoginUser(db *gorm.DB, c *gin.Context, userID string) error { //セッションにデータの保存
+	// 格納するための構造体を用意
+	var retrievedUser user
+
+	// result 変数に結果を格納してエラーチェックを行うのが一般的です
+	result := db.Where("name = ?", userID).First(&retrievedUser)
+
+	// 3. エラーハンドリング
+	if result.Error != nil {
+		// データが見つからない、または接続エラーなどの場合
+		return result.Error
+	}
+	s := retrievedUser.Name
+	parts := strings.Split(s, "-")
+	UserNam := parts[0]
+
+	session := sessions.Default(c)
+
+	// セッションにログイン者を登録
+	session.Set("user_id", retrievedUser.ID)
+	session.Set("user_nam", UserNam)
+	session.Set("user_teacher", retrievedUser.Teacher)
+
+	// セッションの保存（忘れがちなので関数内に閉じ込めるのが安全）
+	if err := session.Save(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// クラス作成のDBの登録
+func CreateCourseWithUniqueCode(db *gorm.DB, course *Course) (uint, error) {
+	for {
+		// コードを生成
+		code := GenerateInviteCode()
+
+		// 既に存在するかチェック
+		var count int64
+		db.Model(&Course{}).Where("invite_code = ?", code).Count(&count)
+
+		if count == 0 {
+			// 重複がなければセットしてループ終了
+			course.InviteCode = code
+			break
+		}
+		// 重複があればもう一度ループして生成し直し
+	}
+
+	// DBへ登録
+	err := db.Create(course).Error
+	if err != nil {
+		return 0, err // 失敗した場合は 0 とエラーを返す
+	}
+
+	// 登録成功後、course.ID には自動で値が入っている
+	return course.ID, nil
+}
+
+// 　クラスIDの作成
+func GenerateInviteCode() string {
+	// 打ち間違いを防ぐため、似ている文字（I, l, O, 0, 1）を除外したリスト
+	const charset = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	const length = 6 // 6桁くらいがちょうどいいです
+
+	// 実行のたびに結果が変わるようにシードを設定
+	seededRand := mrand.New(mrand.NewSource(time.Now().UnixNano()))
+
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = charset[seededRand.Intn(len(charset))]
+	}
+	return string(b)
+}
+
+// 画像に変換
+func decodeBase64Image(base64Str string) (string, error) {
+	// JSから送られてくる "data:image/png;base64,xxxx" のカンマより前をカット
+	i := strings.Index(base64Str, ",")
+	if i != -1 {
+		base64Str = base64Str[i+1:]
+	}
+
+	// Base64文字列をバイト配列（[]byte）にデコード
+	data, err := base64.StdEncoding.DecodeString(base64Str)
+	if err != nil {
+		return "", err
+	}
+	// 保存先ディレクトリの準備
+	uploadDir := "./image/ai_photograph"
+	if _, err := os.Stat(uploadDir); os.IsNotExist(err) {
+		os.MkdirAll(uploadDir, os.ModePerm)
+	}
+
+	// ユニークなファイル名の生成 (UUIDを利用)
+	fileName := fmt.Sprintf("%s.jpg", uuid.New().String())
+	filePath := filepath.Join(uploadDir, fileName)
+
+	// 4. ファイル書き込み
+	err = os.WriteFile(filePath, data, 0644)
+	if err != nil {
+		return "", err
+	}
+
+	return filePath, nil
+}
+
+func sendAllSetsToPython(userID string, cID string, trainingData []TrainingSet) error {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	// ユーザーIDをセット（フォルダ分け用）
+	_ = writer.WriteField("user_id", userID)
+	_ = writer.WriteField("explanation_id", cID)
+
+	for i, set := range trainingData {
+		// ラベル名（例: labels_0 = "金閣寺"）
+		_ = writer.WriteField(fmt.Sprintf("label_%d", i), set.Name)
+
+		// 画像（例: images_0 という名前で複数送る）
+		for j, imgData := range set.Images {
+			fieldName := fmt.Sprintf("images_%d", i)
+			fileName := fmt.Sprintf("set%d_img%d.jpg", i, j)
+			part, _ := writer.CreateFormFile(fieldName, fileName)
+			part.Write(imgData)
+		}
+	}
+	writer.Close()
+
+	req, _ := http.NewRequest("POST", "http://100.121.255.9:8000/process", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	client := &http.Client{Timeout: 300 * time.Second} // 画像が多いので5分
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
+}
+
+// 読み込みに必要なパッケージを import に追加するのを忘れずに！
+// "archive/zip", "io", "os", "path/filepath", "strings", "fmt"
+
+func unzip(src, dest string) error {
+	r, err := zip.OpenReader(src)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
+	for _, f := range r.File {
+		// 出力先のパスを決定
+		fpath := filepath.Join(dest, f.Name)
+
+		// セキュリティチェック：解凍先が指定ディレクトリの外に出ないようにする
+		if !strings.HasPrefix(fpath, filepath.Clean(dest)+string(os.PathSeparator)) {
+			return fmt.Errorf("illegal file path: %s", fpath)
+		}
+
+		// ディレクトリの場合は作成して次へ
+		if f.FileInfo().IsDir() {
+			os.MkdirAll(fpath, os.ModePerm)
+			continue
+		}
+
+		// 親ディレクトリが存在しない場合は作成
+		if err := os.MkdirAll(filepath.Dir(fpath), os.ModePerm); err != nil {
+			return err
+		}
+
+		// 書き込み用のファイルを作成
+		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		if err != nil {
+			return err
+		}
+
+		// ZIP内のファイルをコピー
+		rc, err := f.Open()
+		if err != nil {
+			outFile.Close()
+			return err
+		}
+
+		_, err = io.Copy(outFile, rc)
+
+		// 確実に閉じる
+		outFile.Close()
+		rc.Close()
+
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}

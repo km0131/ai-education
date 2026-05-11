@@ -1,8 +1,8 @@
 openapi: 3.0.0
 info:
   contact: {}
-  description: これはサロン顧客管理用APIです。
-  title: Salon App API
+  description: AI教育プラットフォームのAPIドキュメント
+  title: AI Education Platform API
   version: "1.0"
 paths:
   /ping:

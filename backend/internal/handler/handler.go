@@ -2,157 +2,211 @@ package handler
 
 import (
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"ai-education/backend/internal/db"
-	"ai-education/backend/internal/model"
-	"ai-education/backend/internal/utils"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/sessions"
 	"gorm.io/gorm"
 )
 
-const sessionKey = "image_numbers"
-
-// LoginPageData はログイン画面に渡すデータ構造です。
-type LoginPageData struct {
-	ErrorMessage string
-}
-
 // Handler は全てのハンドラーが共有する依存関係を保持します。
 type Handler struct {
-	DB      *gorm.DB
-	Store   sessions.Store
+	DB *gorm.DB
 }
 
-// GetLogin はログインページを表示します。
+// GetLogin はログイン用のデータを返します。
 func (h *Handler) GetLogin(c *gin.Context) {
-	c.HTML(http.StatusOK, "login.html", gin.H{
-		"title": "ログイン画面",
+	c.JSON(http.StatusOK, gin.H{
+		"message": "login endpoint",
 	})
 }
 
-// PostLogin はログインフォームの送信を処理します。
+// PostLogin はログイン認証を処理し、ユーザーが入力したユーザー名から
+// パスワード画像リストを返します。
 func (h *Handler) PostLogin(c *gin.Context) {
-	username := c.PostForm("inputUsername")
+	var req struct {
+		InputUsername string `json:"inputUsername" binding:"required"`
+	}
 	
-	fetcheduser, err := db.FindUserByName(h.DB, username)
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	
+	fetchedUser, err := db.FindUserByName(h.DB, req.InputUsername)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			fmt.Println("指定されたユーザー名が見つかりませんでした。")
-			c.HTML(http.StatusOK, "login.html", LoginPageData{
-				ErrorMessage: "入力されたユーザー名は存在しません。再度確認してください。",
-			})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
 			return
 		}
-		log.Fatal("指定IDリストのデータ取得に失敗しました: %w", err)
+		log.Printf("user lookup failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
 	}
-
-	stringValues := strings.Split(fetcheduser.PasswordGroup, ",")
-	var number []int
+	
+	// PasswordGroup をパース（カンマ区切りの数字を[]intに変換）
+	var numbers []int
+	stringValues := strings.Split(fetchedUser.PasswordGroup, ",")
 	for _, s := range stringValues {
-		i, err := strconv.Atoi(strings.TrimSpace(s))
-		if err != nil {
-			fmt.Printf("数値への変換に失敗: %v
-", err)
-			continue
+		s = strings.TrimSpace(s)
+		if num, err := strconv.Atoi(s); err == nil {
+			numbers = append(numbers, num)
 		}
-		number = append(number, i)
 	}
-
-	fmt.Println("スライス化された値:", number)
-	list, name, err := db.Image_DB(h.DB, number)
+	
+	// ユーザーのパスワード画像を取得
+	list, name, err := db.Image_DB(h.DB, numbers)
 	if err != nil {
-		log.Fatal("画像リストのDB検索でエラーが出ました。:", err)
+		log.Printf("image retrieval failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
 	}
-
-	c.HTML(http.StatusOK, "login_p.html", gin.H{
-		"img":      list,
+	
+	c.JSON(http.StatusOK, gin.H{
+		"status":   "next_step",
+		"img_list": list,
 		"img_name": name,
 	})
 }
 
-// GetSignup は新規登録ページを表示します。
+// GetSignup は新規登録用の画像リストを返します。
 func (h *Handler) GetSignup(c *gin.Context) {
 	list, name, number, err := db.Random_image(h.DB)
 	if err != nil {
-		log.Fatal("画像リストの生成中にエラーが発生しました:", err)
+		log.Printf("image generation failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
 	}
-
-	fmt.Println(list)
-	fmt.Println(name)
-	fmt.Println(number)
-
-	session, _ := h.Store.Get(c.Request, "mysession")
-	session.Values[sessionKey] = number
-	session.Save(c.Request, c.Writer)
-
-	c.HTML(http.StatusOK, "signup.html", gin.H{
-		"title":    "新規登録画面",
-		"img":      list,
-		"img_name": name,
+	
+	c.JSON(http.StatusOK, gin.H{
+		"message": "signup images",
+		"images":  list,
+		"image_names": name,
+		"image_numbers": number,
 	})
 }
 
-// PostSignup は新規登録フォームの送信を処理します。
+// PostSignup は新規登録を処理します。
+// フロントエンドから { username, role, images, email } を受け取り、ユーザーを作成します。
 func (h *Handler) PostSignup(c *gin.Context) {
-	session, _ := h.Store.Get(c.Request, "mysession")
-	number := session.Values[sessionKey]
-
-	if number == nil {
-		log.Println("セッションキーが見つかりません。シリアライズをスキップします。")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "セッションデータが見つかりません"})
+	var req struct {
+		Username string   `json:"username" binding:"required"`
+		Role     string   `json:"role" binding:"required"` // "teacher" or "student"
+		Images   []string `json:"images" binding:"required"`
+		Email    string   `json:"email"`
+	}
+	
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
-
-	intnumber, ok := number.([]int)
-	if !ok {
-		log.Printf("ユーザー番号の型が期待通りではありません: 実際の型 %T", intnumber)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "セッションデータの型が不正です"})
+	
+	teacher := req.Role == "teacher"
+	
+	count := 3
+	if len(req.Images) < count {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "insufficient passwords"})
 		return
 	}
-
-	num := serializeIntSlice(intnumber)
-	username := c.PostForm("inputUsername")
-	email := c.PostForm("email")
-	teacher := true
-	password := c.PostFormArray("selected_images[]")
-
-	if email == "" {
-		email = "null"
-		teacher = false
-	}
-
-	count := 3 // r_memo.goではハードコードされていたため、ここでも仮に3とする
-	password_1 := ""
+	
+	// 画像ラベルをカンマ区切りで保存
+	password := ""
 	for i := 0; i < count; i++ {
-		password_1 += password[i]
+		password += req.Images[i]
+		if i < count-1 {
+			password += ","
+		}
 	}
-
-	hashPassword_1, err := utils.HashPassword(password_1, utils.DefaultParams)
+	
+	// ユーザー作成（パスワード画像ラベルを PasswordGroup に保存）
+	newUser, err := db.InsertUser(h.DB, req.Username, password, "", req.Email, teacher)
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("user creation failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "user creation failed"})
+		return
 	}
-
-	DB_name, err := db.InsertUser(h.DB, username, hashPassword_1, num, email, teacher)
-	if err != nil {
-		log.Fatal(err)
-	}
-
+	
+	// QRコード生成用のトークンを作成（簡易実装）
+	qrCode := "QR:" + newUser.ID
+	
 	c.JSON(http.StatusOK, gin.H{
-		"message":      "ユーザー登録リクエストを受信しました",
-		"user":         DB_name.Name,
-		"email":        DB_name.Email,
-		"teacher":      DB_name.Teacher,
-		"password":     password,
-		"password_1":   password_1,
-		"number":       number,
-		"hashPassword": hashPassword_1,
+		"username":   newUser.Name,
+		"id":         newUser.ID,
+		"qr_code":    qrCode,
+		"is_teacher": teacher,
+	})
+}
+
+// PostLoginRegistrer は画像パスワード照合ハンドラーです。
+func (h *Handler) PostLoginRegistrer(c *gin.Context) {
+	var req struct {
+		Username string   `json:"username" binding:"required"`
+		Images   []string `json:"images" binding:"required"`
+	}
+	
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	
+	fetchedUser, err := db.FindUserByName(h.DB, req.Username)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
+		return
+	}
+	
+	// ユーザーのパスワード画像を取得して照合
+	count := 3
+	if len(req.Images) < count {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "insufficient images"})
+		return
+	}
+	
+	// パスワード画像を連結
+	password1 := ""
+	for i := 0; i < count; i++ {
+		password1 += req.Images[i]
+	}
+	
+	// DBから取得したパスワードと照合
+	if password1 == fetchedUser.Password {
+		c.JSON(http.StatusOK, gin.H{
+			"password": true,
+		})
+	} else {
+		c.JSON(http.StatusOK, gin.H{
+			"password": false,
+			"error":    "password mismatch",
+		})
+	}
+}
+
+// PostLoginQR はQRコードログインハンドラーです。
+func (h *Handler) PostLoginQR(c *gin.Context) {
+	var req struct {
+		QRData string `json:"qr_data" binding:"required"`
+	}
+	
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	
+	// 簡易実装: QRコードからユーザーIDを抽出
+	// 実際の実装では復号化と照合が必要
+	if req.QRData == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid qr data"})
+		return
+	}
+	
+	// ここでは簡易実装として、QRコードが有効と仮定
+	c.JSON(http.StatusOK, gin.H{
+		"status":   "success",
+		"password": true,
 	})
 }
 

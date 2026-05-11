@@ -8,3 +8,11 @@ vendor/
 # OSのゴミ
 .DS_Store.envrc
 .envrc
+.aider*
+.env
+# SurrealDB data
+surreal_data/
+*.db
+*.log
+.env
+.env

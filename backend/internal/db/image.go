@@ -27,7 +27,7 @@ func Image_DB(db *gorm.DB, numbers []int) (list []string, name []string, err err
 
 // Random_image はデータベースからランダムな画像を3枚選択して返します。
 func Random_image(db *gorm.DB) (list []string, name []string, number []int, err error) {
-	var count int
+	var count int64
 	if err := db.Model(&model.Certification{}).Count(&count).Error; err != nil {
 		return nil, nil, nil, err
 	}
@@ -42,7 +42,7 @@ func Random_image(db *gorm.DB) (list []string, name []string, number []int, err 
 	selectedIDs := make(map[int]bool)
 	var randomNumbers []int
 	for len(randomNumbers) < 3 {
-		randomID := rand.Intn(count) + 1 // IDは1から始まることを想定
+		randomID := rand.Intn(int(count)) + 1 // IDは1から始まることを想定
 		if !selectedIDs[randomID] {
 			selectedIDs[randomID] = true
 			randomNumbers = append(randomNumbers, randomID)

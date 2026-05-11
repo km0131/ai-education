@@ -40,7 +40,8 @@ services:
       timeout: 10s       # 応答待ちを長くする
       retries: 5
       start_period: 300s # 5分間は失敗しても強制終了させない
-  # --- Bun + React/Next.js フロントエンド ---
+      
+# --- Bun + Hono (BFF / Frontend) ---
   frontend:
     build: ./frontend
     container_name: education-frontend
@@ -49,10 +50,16 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    # 開発用は package.json の `dev` を使う
     command: bun run dev
     environment:
       - API_URL=http://backend:8080
-      - WATCHPACK_POLLING=true
+      - NODE_ENV=development
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     depends_on:
       backend:
         condition: service_healthy

@@ -1,7 +1,13 @@
-FROM oven/bun:alpine
+FROM oven/bun:1.2-alpine
+
 WORKDIR /app
+
+# 依存関係のインストール
 COPY package.json bun.lockb* ./
 RUN bun install
+
+# ソースコードをコピー
 COPY . .
-# 開発モードで起動
-CMD ["bun", "run", "dev"]
+
+# 開発時はホットリロードを有効にする
+CMD ["bun", "--hot", "src/index.ts"]

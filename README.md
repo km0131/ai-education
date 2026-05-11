@@ -1,11 +1,11 @@
 # プロジェクト概要（要約）
 
-このリポジトリは、バックエンド（GoとOpenAPI想定）とフロントエンド（Bun + Hono）を含む学習用のフルスタック構成です。ローカル実行は `docker-compose.yml` を使ってサービス（DB、backend、frontend）を起動する想定です。
+このリポジトリは、バックエンド（GoとOpenAPI想定）とフロントエンド（Bun + Hono）を含む学習用のフルスタック構成です。ローカル実行はリポジトリ直下の `docker-compose.yml` を使ってサービス（DB、backend、frontend）を起動する想定です。
 
 ## フォルダ構成（主要）
 
 - `backend/`：Go 製（想定）のサーバー実装。`Dockerfile` があり、`docker-compose.yml` でビルドされる。
-- `frontend/`：Bun + Hono によるフロントエンド。
+- `frontend/`：Bun + Hono によるフロントエンド。`frontend` サービスとして Docker Compose から起動する。
 - `openapi/`：OpenAPI または API 仕様関連。`schema.yaml` が存在し、生成設定（gin-server 等）が記述されている。
 - ルート直下：`docker-compose.yml`（開発用のサービス定義）、`README.md`（このファイル）など。
 
@@ -24,13 +24,13 @@
 
 ## 開発・実行方法（開発者向けメモ）
 
-- ローカル（docker-compose）起動例：
+- ローカル（docker-compose）起動例：リポジトリ直下で実行する。
 
 ```
 docker compose up --build
 ```
 
-- フロントエンド単体（ローカル開発）:
+- フロントエンド単体（ローカル開発）: `frontend/` に移動して実行する。
 
 ```
 cd frontend
@@ -39,7 +39,7 @@ bun run dev
 
 ## 補足・観察事項
 
-- `frontend` は Bun + Hono の構成を採用しており、軽量かつ高速な開発・実行環境を想定。
+- `frontend` は Bun + Hono の構成を採用しており、軽量かつ高速な開発・実行環境を想定。Docker Compose では `frontend` サービスとして起動する。
 - `openapi/schema.yaml` の設定から、サーバー側は OpenAPI からコード生成（gin-server）を行うワークフローが想定される。
 
 ---

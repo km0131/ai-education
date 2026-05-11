@@ -19,7 +19,7 @@ type User struct { //ユーザ登録のDB
 	QRpassword    string         `gorm:"type:varchar(255);not null"` // VARCHAR(255) NOT NULL QRパスワード
 }
 
-type certification struct { //セキュリティー用画像のDB
+type Certification struct { //セキュリティー用画像のDB
 	ID   uint   `gorm:"primaryKey"` //画像番号
 	Name string `gorm:"not null"`   //画像の名前
 }
@@ -35,7 +35,7 @@ type Course struct { //クラス用のDB
 	Description string // 説明
 	InviteCode  string `gorm:"unique;not null;index"` // 参加コード (一意の文字列 / 重複不可)
 	TeacherID   string `gorm:"index"`                 // 担任教師のID (UsersテーブルのIDを参照する外部キー想定)
-	Teacher     user   `gorm:"foreignKey:TeacherID"`  //教師IDを使ってuserのデータを検索して取り出せる。便利
+	Teacher     User   `gorm:"foreignKey:TeacherID"`  //教師IDを使ってuserのデータを検索して取り出せる。便利
 	ThemeColor  string //クラスのカラーコード
 }
 
@@ -71,4 +71,13 @@ type AiModel struct {
 	CourseID  string `gorm:"not null;index"`
 	ModelPath string `json:"model_path"` // モデルの保存場所
 	IsReady   bool   `json:"is_ready"`   // 学習完了フラグ
+}
+
+// TokenClaims は Paseto トークンのペイロード構造です。
+type TokenClaims struct {
+	UserID       uint      `json:"user_id"`
+	Username     string    `json:"username"`
+	ImageNumbers []int     `json:"image_numbers,omitempty"`
+	IssuedAt     time.Time `json:"iat"`
+	ExpiresAt    time.Time `json:"exp"`
 }

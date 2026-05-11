@@ -8,11 +8,8 @@ import (
 
 	"ai-education/backend/internal/db"
 	"ai-education/backend/internal/handler"
-	"ai-education/backend/internal/model"
 
 	"github.com/gin-contrib/cors"
-	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
@@ -32,8 +29,8 @@ func PingHandler(c *gin.Context) {
 func main() {
 
 	db.InitDB()
-	db.DB.AutoMigrate(&model.User{}, &model.Certification{}, &model.Course{}, &model.Enrollment{},
-		&model.AiExplanation{}, &model.AiPhotograph{}, &model.AiModel{})
+	db.Migrate() 
+	
 
 	r := gin.Default()
 
@@ -44,27 +41,21 @@ func main() {
 		MaxAge:       12 * time.Hour,
 	}))
 
-	// セッションストアの設定
-	// TODO: 環境変数からセッションキーを取得する
-	store := cookie.NewStore([]byte("secret")) // 秘密鍵は環境変数から取得することを推奨
-	r.Use(sessions.Sessions("mysession", store))
-
 	// ハンドラーの初期化
-	handler := handler.Handler{
-		DB:    db.DB,
-		Store: store,
+	h := handler.Handler{
+		DB: db.DB,
 	}
 
-	// HTMLテンプレートのロード
-	r.LoadHTMLGlob("frontend/*.html")
-	// 静的ファイルの提供
-	r.Static("/static", "./image")
-
-	// ルーティング
-	r.GET("/", handler.GetLogin)
-	r.POST("/", handler.PostLogin)
-	r.GET("/signup", handler.GetSignup)
-	r.POST("/signup", handler.PostSignup)
+	v0 := r.Group("/api/v0")
+	{
+		// ルーティング
+		v0.GET("/", h.GetLogin)
+		v0.POST("/", h.PostLogin)
+		v0.GET("/signup", h.GetSignup)
+		v0.POST("/signup", h.PostSignup)
+		v0.POST("/login_registrer", h.PostLoginRegistrer)
+		v0.POST("/login_qr", h.PostLoginQR)
+	}
 
 	v1 := r.Group("/api/v1")
 	{

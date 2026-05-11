@@ -6,6 +6,9 @@ import { useRouter } from 'next/navigation';
 import { Html5Qrcode } from 'html5-qrcode';
 import jsQR from 'jsqr';
 
+// API endpoint constant
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+
 // =================================================================
 // QR Code Scanner Modal
 // =================================================================
@@ -231,7 +234,7 @@ function LoginStep1({ onUserChecked }: LoginStep1Props) {
     setErrorMessage("");
 
     try {
-      const response = await fetch('/api/login', {
+      const response = await fetch(`${API_URL}/api/v0/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ inputUsername: username }),
@@ -257,7 +260,7 @@ function LoginStep1({ onUserChecked }: LoginStep1Props) {
     setErrorMessage("");
 
     try {
-      const response = await fetch('/api/login_qr', {
+      const response = await fetch(`${API_URL}/api/v0/login_qr`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ qr_data: decodedText }),
@@ -425,7 +428,7 @@ function LoginStep2({ username, imageList, imageNames, onBack }: LoginStep2Props
         images: sortedLabels
       };
 
-      const response = await fetch('/api/login_registrer', {
+      const response = await fetch(`${API_URL}/api/v0/login_registrer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(loginData),

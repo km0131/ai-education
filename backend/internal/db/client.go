@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"ai-education/backend/internal/model"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -26,4 +27,17 @@ func InitDB() {
 		panic("データベースへの接続に失敗しました: " + err.Error())
 	}
 	fmt.Println("データベースに接続しました")
+}
+
+// または package db の init 時に全モデルをマイグレート
+func Migrate() error {
+	return DB.AutoMigrate(
+		&model.User{},
+		&model.Certification{},
+		&model.Course{},
+		&model.Enrollment{},
+		&model.AiExplanation{},
+		&model.AiPhotograph{},
+		&model.AiModel{},
+	)
 }
