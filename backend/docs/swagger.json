@@ -1,8 +1,8 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "これはサロン顧客管理用APIです。",
-        "title": "Salon App API",
+        "description": "教育用AIサーバAPI。",
+        "title": "AI Server API",
         "contact": {},
         "version": "1.0"
     },

@@ -1,20 +1,30 @@
 {
-  "name": "ai-education-frontend",
+  "name": "my-app",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "scripts": {
-    "dev": "bun run --hot src/index.ts",
-    "build": "bun build ./src/index.ts --outdir ./dist",
-    "start": "bun src/index.ts",
-    "lint": "eslint src"
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
   },
   "dependencies": {
-    "hono": "^4.7.2"
+    "@tensorflow/tfjs": "^4.22.0",
+    "html2canvas": "^1.4.1",
+    "html5-qrcode": "^2.3.8",
+    "jsqr": "^1.4.0",
+    "next": "16.1.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
   },
   "devDependencies": {
-    "@types/bun": "latest",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
     "eslint": "^9",
+    "eslint-config-next": "16.1.1",
+    "tailwindcss": "^4",
     "typescript": "^5"
   }
 }

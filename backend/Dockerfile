@@ -1,5 +1,5 @@
 # 安定版のイメージを指定（ラズパイOSが64bitなら aarch64 が自動で選ばれます）
-FROM golang:1.25-alpine
+FROM docker.io/library/golang:1.25-alpine
 
 # ビルドに必要な最小限のツール（gccなど）をインストール
 # GORMなどでCGOを使う場合は build-base が必要になることがあります
