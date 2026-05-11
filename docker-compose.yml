@@ -48,7 +48,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./frontend:/app
+      # - ./frontend:/app
       - /app/node_modules
     # 開発用は package.json の `dev` を使う
     command: bun run dev
