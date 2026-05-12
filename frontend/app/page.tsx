@@ -213,7 +213,7 @@ function QrScannerModal({ onScanSuccess, onClose }: QrScannerModalProps) {
 // Step 1: Username Input Component
 // =================================================================
 interface LoginStep1Props {
-  onUserChecked: (username: string, imageList: string[], imageNames: string[]) => void;
+  onUserChecked: (username: string, imageList: string[], imageNumbers: number[]) => void;
 }
 
 function LoginStep1({ onUserChecked }: LoginStep1Props) {
@@ -242,7 +242,7 @@ function LoginStep1({ onUserChecked }: LoginStep1Props) {
       const data = await response.json();
 
       if (response.ok && data.status === "next_step") {
-        onUserChecked(username, data.img_list, data.img_name);
+        onUserChecked(username, data.img_list, data.img_number ?? []);
       } else {
         setErrorMessage(data.error || "そのなまえのひとはいないみたい。もういちどかくにんしてね。");
       }
@@ -281,7 +281,7 @@ function LoginStep1({ onUserChecked }: LoginStep1Props) {
           // 画像リストがあれば次のステップ（画像認証）へ、なければログイン成功とみなす
           if (data.img_list && data.img_list.length > 0) {
             console.log("Proceeding to Step 2");
-            onUserChecked(data.username, data.img_list, data.img_name);
+            onUserChecked(data.username, data.img_list, data.img_number ?? []);
           } else {
             console.log("No images, redirecting to /main_room");
             router.push('/main_room');
@@ -377,11 +377,11 @@ function LoginStep1({ onUserChecked }: LoginStep1Props) {
 interface LoginStep2Props {
   username: string;
   imageList: string[];
-  imageNames: string[];
+  imageNumbers: number[];
   onBack: () => void;
 }
 
-function LoginStep2({ username, imageList, imageNames, onBack }: LoginStep2Props) {
+function LoginStep2({ username, imageList, imageNumbers, onBack }: LoginStep2Props) {
   const router = useRouter();
   const [selectedIndices, setSelectedIndices] = useState<number[]>([]);
   const [statusMessage, setStatusMessage] = useState({ text: "えらんだ どうぶつ: 0/3", color: "text-slate-500" });
@@ -421,10 +421,10 @@ function LoginStep2({ username, imageList, imageNames, onBack }: LoginStep2Props
 
     try {
       const sortedIndices = [...selectedIndices].sort((a, b) => a - b);
-      const sortedLabels = sortedIndices.map(index => imageNames[index]);
+      const sortedNumbers = sortedIndices.map(index => imageNumbers[index]);
       const loginData = {
         username: username,
-        images: sortedLabels
+        images: sortedNumbers
       };
 
       const response = await fetch(`${API_URL}/api/v0/login_registrer`, {
@@ -532,15 +532,15 @@ function LoginStep2({ username, imageList, imageNames, onBack }: LoginStep2Props
 interface LoginData {
   username: string;
   imageList: string[];
-  imageNames: string[];
+  imageNumbers: number[];
 }
 
 export default function LoginPage() {
   const [step, setStep] = useState(1);
   const [loginData, setLoginData] = useState<LoginData | null>(null);
 
-  const handleUserChecked = (username: string, imageList: string[], imageNames: string[]) => {
-    setLoginData({ username, imageList, imageNames });
+  const handleUserChecked = (username: string, imageList: string[], imageNumbers: number[]) => {
+    setLoginData({ username, imageList, imageNumbers });
     setStep(2);
   };
 

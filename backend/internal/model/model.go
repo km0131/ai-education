@@ -6,6 +6,13 @@ import (
 	"gorm.io/gorm"
 )
 
+type RegisterRequest struct {
+	Username string `json:"username" binding:"required"`
+	Role     string `json:"role" binding:"required"`
+	Images   []int  `json:"images" binding:"required"`
+	Email    string `json:"email"`
+}
+
 type User struct { //ユーザ登録のDB
 	ID            string         `gorm:"type:VARCHAR(36) PRIMARY KEY"` // ID(UUID)を使用
 	CreatedAt     time.Time      //作成日時

@@ -1,54 +1,78 @@
 package db
 
 import (
-	"errors"
-	"math/rand"
-	"time"
+	"crypto/rand"
+	"fmt"
+	"log"
+	"math/big"
+	"path"
+	"strconv"
 
 	"ai-education/backend/internal/model"
 	"gorm.io/gorm"
 )
 
-// Image_DB は指定された番号のスライスに基づいて画像リストと名前を取得します。
-func Image_DB(db *gorm.DB, numbers []int) (list []string, name []string, err error) {
-	var certifications []model.Certification
-
-	if err := db.Where("id IN ?", numbers).Find(&certifications).Error; err != nil {
-		return nil, nil, err
+// 画像番号からリンクとDB検索を行う
+func Image_DB(db *gorm.DB, number []int) ([]string, []string, error) {
+	var fetchedCertifications []model.Certification
+	result := db.Where("id IN ?", number).Find(&fetchedCertifications) //１回で全てのデータを取得
+	if result.Error != nil {
+		// IDが無い
+		return nil, nil, fmt.Errorf("指定IDリストのデータ取得に失敗しました: %w", result.Error)
 	}
+	const selectionCount = 10
+	list := make([]string, 0, selectionCount)
+	name := make([]string, 0, selectionCount)
 
-	for _, cert := range certifications {
-		list = append(list, "/static/"+cert.Name)
-		name = append(name, cert.Name)
+	// 定数ではなく実際の画像保存ディレクトリを指定
+    const baseDir = "images/certification"
+
+	for _, i := range fetchedCertifications {
+		imageIDStr := strconv.Itoa(int(i.ID))
+		r := path.Join(baseDir, imageIDStr+".png") // 画像リンクの作成
+		list = append(list, r)                     //画像のパスをリストに追加
+		name = append(name, i.Name)                // 画像の名前をリストに追加
 	}
-
+	// 取得した数が必要な数と異なるときのチェック
+	if len(fetchedCertifications) != len(number) {
+		// ランダムに選ばれたIDの一部が見つからなかった
+		log.Printf("警告: 期待値 %d 件に対し、取得件数は %d 件でした。", len(number), len(fetchedCertifications))
+	}
 	return list, name, nil
 }
 
-// Random_image はデータベースからランダムな画像を3枚選択して返します。
-func Random_image(db *gorm.DB) (list []string, name []string, number []int, err error) {
-	var count int64
-	if err := db.Model(&model.Certification{}).Count(&count).Error; err != nil {
-		return nil, nil, nil, err
+// ランダムに画像を選択
+func Random_image(db *gorm.DB) ([]string, []string, []int, error) {
+	const totalCount = 30
+	const selectCount = 12
+
+	// 1. 1から30までのリストを作成
+	candidates := make([]int, totalCount)
+	for i := 0; i < totalCount; i++ {
+		candidates[i] = i + 1
 	}
 
-	if count < 3 {
-		return nil, nil, nil, errors.New("データベースに3つ以上の画像がありません")
-	}
-
-	rand.Seed(time.Now().UnixNano())
-	
-	// ランダムな3つの異なるIDを選択
-	selectedIDs := make(map[int]bool)
-	var randomNumbers []int
-	for len(randomNumbers) < 3 {
-		randomID := rand.Intn(int(count)) + 1 // IDは1から始まることを想定
-		if !selectedIDs[randomID] {
-			selectedIDs[randomID] = true
-			randomNumbers = append(randomNumbers, randomID)
+	// 2. crypto/rand を使ったフィッシャー・イェーツ・シャッフル
+	for i := len(candidates) - 1; i > 0; i-- {
+		// 0 から i までのランダムなインデックスを選択
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
+		if err != nil {
+			return nil, nil, nil, err
 		}
+		j := int(n.Int64())
+		// 要素を入れ替える
+		candidates[i], candidates[j] = candidates[j], candidates[i]
 	}
 
-	list, name, err = Image_DB(db, randomNumbers)
-	return list, name, randomNumbers, err
+	// 3. 先頭の12個を取り出す
+	number := candidates[:selectCount]
+
+	// 4. 画像リンクと名前を取得
+	list, name, err := Image_DB(db, number)
+	if err != nil {
+		// log.Fatalを使うとサーバーが止まるので、実運用ではエラーを返すのが一般的です
+		return nil, nil, nil, fmt.Errorf("画像リストのDB検索エラー: %w", err)
+	}
+
+	return list, name, number, nil
 }

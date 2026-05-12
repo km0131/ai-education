@@ -30,11 +30,21 @@
 docker compose up --build
 ```
 
+- コンテナの削除
+```
+sudo docker-compose down
+```
+
 - フロントエンド単体（ローカル開発）: `frontend/` に移動して実行する。
 
 ```
 cd frontend
 bun run dev
+```
+
+- コンテナの確認
+```
+podman ps -a
 ```
 
 ## 補足・観察事項

@@ -3,6 +3,7 @@ package utils
 import (
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -28,6 +29,12 @@ type argon2Params struct {
 	keyLength   uint32
 }
 
+// HashPasswordWithDefault は推奨設定でハッシュ化を行います。
+// これを作っておけば、handler側で params を渡す手間が省けます。
+func HashPasswordWithDefault(password string) (string, error) {
+    return HashPassword(password, defaultParams)
+}
+
 // hashPassword はパスワードをArgon2でハッシュ化します。
 func HashPassword(password string, p *argon2Params) (encodedHash string, err error) {
 	salt, err := generateRandomBytes(p.saltLength)
@@ -43,6 +50,11 @@ func HashPassword(password string, p *argon2Params) (encodedHash string, err err
 
 	encodedHash = fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s", argon2.Version, p.memory, p.iterations, p.parallelism, b64Salt, b64Hash)
 	return encodedHash, nil
+}
+
+// GenerateRandomToken はQR用のランダムトークンを生成します。
+func GenerateRandomToken() string {
+	return generateRandomToken()
 }
 
 // VerifyPassword は提供されたパスワードがハッシュと一致するか検証します。
@@ -104,4 +116,10 @@ func decodeHash(encodedHash string) (p *argon2Params, salt, hash []byte, err err
 	p.keyLength = uint32(len(hash))
 
 	return p, salt, hash, nil
+}
+
+func generateRandomToken() string {
+	b := make([]byte, 16) // 16バイトのランダム値
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }

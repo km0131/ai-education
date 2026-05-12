@@ -7,7 +7,7 @@ import (
 )
 
 // InsertUser は新しいユーザーをデータベースに挿入します。
-func InsertUser(db *gorm.DB, username, hashPassword, passwordGroup, email string, teacher bool) (model.User, error) {
+func InsertUser(db *gorm.DB, username, hashPassword, passwordGroup, email string, teacher bool, qrPassword string) (string, error) {
 	user := model.User{
 		ID:            uuid.New().String(),
 		Name:          username,
@@ -15,14 +15,14 @@ func InsertUser(db *gorm.DB, username, hashPassword, passwordGroup, email string
 		PasswordGroup: passwordGroup,
 		Email:         email,
 		Teacher:       teacher,
-		QRpassword:    "", // QRpasswordは後で設定されるか、別のロジックで生成されると仮定
+		QRpassword:    qrPassword,
 	}
 
 	if err := db.Create(&user).Error; err != nil {
-		return model.User{}, err
+		return "", err
 	}
 
-	return user, nil
+	return user.ID, nil
 }
 
 // FindUserByName はユーザー名を元にユーザーを検索します。

@@ -112,6 +112,7 @@ function SignUpStep1({ onSuccess }: SignUpStep1Props) {
     const [role, setRole] = useState('student'); // 'student' or 'teacher'
     const [imageList, setImageList] = useState<string[]>([]);
     const [imageNames, setImageNames] = useState<string[]>([]);
+    const [imageNumbers, setImageNumbers] = useState<number[]>([]);
     const [selectedIndices, setSelectedIndices] = useState<number[]>([]);
 
     // UI state
@@ -139,6 +140,7 @@ function SignUpStep1({ onSuccess }: SignUpStep1Props) {
             );
             setImageList(absoluteImages);
             setImageNames(data.img_name);
+            setImageNumbers(data.img_number ?? []);
           } else {
             setErrorMessage(data.error || "がぞうのよみこみにしっぱいしました。");
           }
@@ -177,11 +179,11 @@ function SignUpStep1({ onSuccess }: SignUpStep1Props) {
 
         try {
             const sortedIndices = [...selectedIndices].sort((a, b) => a - b);
-            const sortedLabels = sortedIndices.map(index => imageNames[index]);
-            const registrationData: { username: string; role: string; images: string[]; email?: string } = { 
+          const sortedNumbers = sortedIndices.map(index => imageNumbers[index]);
+          const registrationData: { username: string; role: string; images: number[]; email?: string } = { 
                 username, 
                 role, 
-                images: sortedLabels
+            images: sortedNumbers
             };
 
             if (role === 'teacher') {

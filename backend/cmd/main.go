@@ -2,6 +2,7 @@ package main // ← 必ず1行目！
 
 import (
 	"log"
+	"path/filepath"
 	"time"
 
 	_ "ai-education/backend/docs" // 1. swag initで生成されるdocsをインポート
@@ -46,17 +47,24 @@ func main() {
 		DB: db.DB,
 	}
 
-	// Static file serving for images using custom handler
-	r.GET("/static/certification/:filename", func(c *gin.Context) {
+	r.GET("/images/certification/:filename", func(c *gin.Context) {
 		filename := c.Param("filename")
-		filepath := "/home/kaito/ai-education/imges/certification/" + filename
-		c.File(filepath)
+
+		// セキュリティ対策：パスからファイル名部分だけを取り出す
+		// これにより "../../" などの攻撃を防ぐ
+		safeFilename := filepath.Base(filename)
+
+		// プロジェクトルートを基準にした相対パスにするのが一般的
+		basePath := "./images/certification/" 
+		fullPath := filepath.Join(basePath, safeFilename)
+
+		// 指定したパスがディレクトリでないか、実在するかを確認して返す
+		c.File(fullPath)
 	})
 
 	v0 := r.Group("/api/v0")
 	{
 		// ルーティング
-		v0.GET("/", h.GetLogin)
 		v0.POST("/", h.PostLogin)
 		v0.GET("/signup", h.GetSignup)
 		v0.POST("/signup", h.PostSignup)
