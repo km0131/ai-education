@@ -31,6 +31,8 @@ services:
     environment:
       - GIN_MODE=release
       - DB_HOST=db
+    volumes:
+      - ./imges:/home/kaito/ai-education/imges
     depends_on:
       db:
         condition: service_healthy

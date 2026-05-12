@@ -46,6 +46,13 @@ func main() {
 		DB: db.DB,
 	}
 
+	// Static file serving for images using custom handler
+	r.GET("/static/certification/:filename", func(c *gin.Context) {
+		filename := c.Param("filename")
+		filepath := "/home/kaito/ai-education/imges/certification/" + filename
+		c.File(filepath)
+	})
+
 	v0 := r.Group("/api/v0")
 	{
 		// ルーティング
@@ -62,9 +69,6 @@ func main() {
 		// main関数の中のインライン定義ではなく、上で定義した関数を使う
 		v1.GET("/ping", PingHandler)
 	}
-
-	// Static file serving for images
-	r.Static("/static", "/home/kaito/ai-education/imges")
 
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
