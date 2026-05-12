@@ -63,6 +63,9 @@ func main() {
 		v1.GET("/ping", PingHandler)
 	}
 
+	// Static file serving for images
+	r.Static("/static", "/home/kaito/ai-education/imges")
+
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	log.Println("Server listening on :8080")
