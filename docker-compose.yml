@@ -52,7 +52,7 @@ services:
       - "3000:3000"
     command: ["bun", "run", "dev"]
     environment:
-      - API_URL=http://backend:8080
+      - NEXT_PUBLIC_API_URL=http://localhost:8080
       - NODE_ENV=development
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/"]
