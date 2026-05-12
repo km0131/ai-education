@@ -16,3 +16,13 @@ surreal_data/
 *.log
 .env
 .env
+
+# 画像
+img/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.svg
+*.ico   

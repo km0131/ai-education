@@ -4,9 +4,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import html2canvas from 'html2canvas';
 
-// API endpoint constant
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
-
 // =================================================================
 // Step 2: Confirmation Screen Component
 // =================================================================
@@ -127,7 +124,7 @@ function SignUpStep1({ onSuccess }: SignUpStep1Props) {
       const fetchImages = async () => {
         setIsImagesLoading(true);
         try {
-      const response = await fetch(`${API_URL}/api/v0/signup`, {
+          const response = await fetch('/api/signup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ inputUsername: username }),
@@ -192,7 +189,7 @@ function SignUpStep1({ onSuccess }: SignUpStep1Props) {
                 registrationData.email = "";
             }
             
-            const response = await fetch(`${API_URL}/api/v0/signup`, {
+            const response = await fetch('/api/register', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(registrationData),
