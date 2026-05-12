@@ -1,9 +1,9 @@
 services:
-  # --- PostgreSQL (リレーショナルデータベース) ---
+  # --- PostgreSQL ---
   db:
     image: postgres:17-alpine
     container_name: education-db
-    env_file: .env  
+    env_file: .env
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -25,53 +25,49 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: education-backend
-    env_file: .env  
+    env_file: .env
     ports:
       - "8080:8080"
     environment:
-      GIN_MODE: release
-      DB_HOST: db
+      - GIN_MODE=release
+      - DB_HOST=db
     depends_on:
       db:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "8080"]
-      interval: 20s      # チェックの間隔を広げる
-      timeout: 10s       # 応答待ちを長くする
+      interval: 20s
+      timeout: 10s
       retries: 5
-      start_period: 300s # 5分間は失敗しても強制終了させない
-      
-# --- Bun + Hono (BFF / Frontend) ---
+      start_period: 300s
+
+  # --- Bun + Hono (BFF / Frontend) ---
   frontend:
     build: ./frontend
+    image: localhost/ai-education_frontend:latest
     container_name: education-frontend
     ports:
       - "3000:3000"
-    volumes:
-      # - ./frontend:/app
-      - /app/node_modules
-    # 開発用は package.json の `dev` を使う
-    command: bun run dev
+    command: ["bun", "run", "dev"]
     environment:
       - API_URL=http://backend:8080
       - NODE_ENV=development
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
       interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 5
     depends_on:
       backend:
         condition: service_healthy
 
-  # --- SurrealDB (ポートを8005に変更) ---
+  # --- SurrealDB ---
   surrealdb:
     image: surrealdb/surrealdb:latest
     container_name: education-surrealdb
-    # コンテナ内では常に8000で動くため、外部公開用を8005に設定
     command: start --log trace --user ${SURREALDB_USER:-root} --pass ${SURREALDB_PASS:-root} rocksdb:/data/database.db
     ports:
-      - "8005:8000" 
+      - "8005:8000"
     volumes:
       - ./surreal_data:/data
     healthcheck:

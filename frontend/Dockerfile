@@ -1,8 +1,9 @@
-FROM node:20-alpine
+# 修正前：FROM oven/bun:1.1-slim
+FROM docker.io/oven/bun:1.1-slim
+
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci
+COPY package.json bun.lockb* ./
+RUN bun install
 COPY . .
 EXPOSE 3000
-# 開発モードで起動（ホットリロード有効）
-CMD ["npm", "run", "dev"]
+CMD ["bun", "run", "dev"]
