@@ -5,7 +5,7 @@ tmp_dir = "tmp"
 [build]
   # main.go の場所を cmd/main.go に指定する
   cmd = "go build -o ./tmp/main ./cmd/main.go"
-  bin = "./tmp/main"
+  entrypoint = "./tmp/main"
   # 監視する拡張子
   include_ext = ["go", "tpl", "tmpl", "html", "yaml", "yml"]
   # 除外するディレクトリをもう少し広げ、先頭にスラッシュを入れて確実に指定します

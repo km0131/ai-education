@@ -73,6 +73,7 @@ func Random_image(db *gorm.DB) ([]string, []string, []int, error) {
 		// log.Fatalを使うとサーバーが止まるので、実運用ではエラーを返すのが一般的です
 		return nil, nil, nil, fmt.Errorf("画像リストのDB検索エラー: %w", err)
 	}
+	log.Printf("DEBUG: Image_DB success. Name: %s, ListSize: %d", name, list)
 
 	return list, name, number, nil
 }

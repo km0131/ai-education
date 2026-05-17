@@ -2,7 +2,11 @@ services:
   # --- PostgreSQL ---
   db:
     image: postgres:17-alpine
-    container_name: education-db
+    # container_name: education-db
+    networks:
+      ai-net:
+        aliases:
+          - db  # これを明示することで backend が "db" でアクセス可能になる
     env_file: .env
     environment:
       POSTGRES_USER: ${DB_USER}
@@ -13,7 +17,7 @@ services:
     volumes:
       - ./postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      test: ["CMD", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -24,15 +28,21 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: education-backend
+    # container_name: education-backend
+    networks:
+      - ai-net
     env_file: .env
     ports:
       - "8080:8080"
     environment:
       - GIN_MODE=release
       - DB_HOST=db
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}  # ← これが超重要！
+      - DB_PORT=${DB_PORT}
     volumes:
-      - ./imges:/home/kaito/ai-education/imges
+      - ./images:/home/kaito/ai-education/images  # 画像保存用のボリュームマウント
     depends_on:
       db:
         condition: service_healthy
@@ -47,7 +57,9 @@ services:
   frontend:
     build: ./frontend
     image: localhost/ai-education_frontend:latest
-    container_name: education-frontend
+    # container_name: education-frontend
+    networks:
+      - ai-net
     ports:
       - "3000:3000"
     command: ["bun", "run", "dev"]
@@ -66,14 +78,20 @@ services:
   # --- SurrealDB ---
   surrealdb:
     image: surrealdb/surrealdb:latest
-    container_name: education-surrealdb
+    # container_name: education-surrealdb
+    networks:
+      - ai-net
     command: start --log trace --user ${SURREALDB_USER:-root} --pass ${SURREALDB_PASS:-root} rocksdb:/data/database.db
     ports:
       - "8005:8000"
     volumes:
       - ./surreal_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "(echo > /dev/tcp/localhost/8000) >/dev/null 2>&1 || exit 1"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 10s
       timeout: 5s
       retries: 5
+  
+networks:
+  ai-net:
+    driver: bridge

@@ -58,6 +58,9 @@ func main() {
 		basePath := "./images/certification/" 
 		fullPath := filepath.Join(basePath, safeFilename)
 
+		absPath, _ := filepath.Abs(fullPath)
+    	log.Printf("[DEBUG] 検索中の絶対パス: %s", absPath)
+
 		// 指定したパスがディレクトリでないか、実在するかを確認して返す
 		c.File(fullPath)
 	})

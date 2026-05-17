@@ -28,6 +28,7 @@
 
 ```
 docker compose up --build
+podman-compose up --build
 ```
 
 - コンテナの削除

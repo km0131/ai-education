@@ -80,9 +80,9 @@ func (h *Handler) GetSignup(c *gin.Context) {
 	
 	c.JSON(http.StatusOK, gin.H{
 		"message": "signup images",
-		"images":  list,
-		"image_names": name,
-		"image_numbers": number,
+		"img_list":  list,
+		"img_name": name,
+		"img_number": number,
 	})
 }
 

@@ -13,6 +13,13 @@ type RegisterRequest struct {
 	Email    string `json:"email"`
 }
 
+type RegistrationTicket struct {
+	ID               string    `gorm:"type:varchar(36);primaryKey" json:"id"`
+	ExhibitedNumbers string    `gorm:"type:text;not null" json:"exhibited_numbers"` // カンマ区切りなどで画像番号を保存
+	CreatedAt        time.Time `json:"created_at"`
+	ExpiresAt        time.Time `gorm:"index" json:"expires_at"` // 有効期限
+}
+
 type User struct { //ユーザ登録のDB
 	ID            string         `gorm:"type:VARCHAR(36) PRIMARY KEY"` // ID(UUID)を使用
 	CreatedAt     time.Time      //作成日時
